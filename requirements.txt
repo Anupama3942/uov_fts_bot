@@ -1,4 +1,5 @@
 aiogram
 python-dotenv
-pymongo[srv]
+#pymongo[srv]
 thefuzz
+firebase-admin

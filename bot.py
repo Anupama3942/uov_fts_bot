@@ -26,61 +26,41 @@ db = cluster["faculty_database"]
 files_col = db["academic_resources"]
 
 # ==========================================
-# Course List
+# Verified Course List (from 2020 Handbook)
 # ==========================================
 
 SUBJECTS = {
     # LEVEL 1 - Semester 1
     "TICT1114": ("Essentials of ICT", 1, 1),
     "TICT1123": ("Mathematics for Technology", 1, 1),
-    "TICT1132": ("Physics for Technology", 1, 1),
-    "TICT1142": ("Principles of Management", 1, 1),
+    "TICT1134": ("Fundamentals for Computer Programming", 1, 1),
+    "TICT1142": ("Fundamentals of Web Technologies", 1, 1),
+    "TICT1152": ("Principles of Management", 1, 1),
     "AUX1113":  ("English Language I", 1, 1),
     # LEVEL 1 - Semester 2
-    "TICT1213": ("Structured Programming", 1, 2),
-    "TICT1222": ("Probability and Statistics", 1, 2),
     "TICT1233": ("Operating Systems", 1, 2),
     "TICT1243": ("Electronics and Digital Circuit Designs", 1, 2),
-    "AUX1212":  ("Social Harmony and Active Citizenship", 1, 2),
+    
     # LEVEL 2 - Semester 1
     "TICT2113": ("Data Structures and Algorithms", 2, 1),
-    "TICT2122": ("Statistics for Technology", 2, 1),
     "TICT2134": ("Advanced Computer Programming", 2, 1),
-    "TICT2142": ("Multimedia Design and Technologies", 2, 1),
     "TICT2153": ("Human Computer Interaction", 2, 1),
     "AUX2113":  ("English Language II", 2, 1),
     # LEVEL 2 - Semester 2
-    "TICT2212": ("Operational Research", 2, 2),
-    "TICT2222": ("Computer Networks", 2, 2),
+    "TICT2222": ("Introduction to Computer Network", 2, 2),
     "TICT2233": ("Database Management Systems", 2, 2),
-    "TICT2244": ("Computer Graphics", 2, 2),
-    "TICT2252": ("System Analysis and Design", 2, 2),
-    "TICT2263": ("Accounting for Technology", 2, 2),
-    "AUX2212":  ("Communication and Soft Skills", 2, 2),
+    
     # LEVEL 3 - Semester 1
-    "TICT3113": ("Web Application Development", 3, 1),
     "TICT3123": ("Advanced Database Management Systems", 3, 1),
-    "TICT3133": ("Object Oriented Analysis and Design", 3, 1),
+    "TICT3132": ("Advanced Web Technologies", 3, 1),
     "TICT3142": ("Social and Professional Issues in IT", 3, 1),
     "TICT3153": ("Software Engineering", 3, 1),
-    "TICT3162": ("Information Security", 3, 1),
     # LEVEL 3 - Semester 2
-    "TICT3212": ("IT Project Management", 3, 2),
-    "TICT3223": ("Rapid Application Development", 3, 2),
     "TICT3232": ("Software Quality Assurance", 3, 2),
-    "TICT3243": ("Mobile Computing", 3, 2),
-    "TICT3252": ("E-Business Strategies and Management", 3, 2),
-    "TICT3262": ("Distributed Systems", 3, 2),
     "AUX3211":  ("Research Methodology and Scientific Writing", 3, 2),
-    # LEVEL 4 - Semester 1
-    "TICT4116": ("Industrial Training", 4, 1),
+    
     # LEVEL 4 - Semester 2
-    "TICT4216": ("Group Research Project", 4, 2),
-    "TICT4223": ("Data Mining and Data Warehousing", 4, 2),
-    "TICT4232": ("Cloud Computing", 4, 2),
-    "TICT4242": ("Mobile Application Development", 4, 2),
-    "TICT4253": ("Intelligent Systems", 4, 2),
-    "TICT4262": ("Bioinformatics", 4, 2),
+    "TICT4242": ("Mobile Application Development", 4, 2)
 }
 
 def get_subjects_for(level: int, semester: int):
@@ -98,7 +78,7 @@ def get_persistent_main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📂 Browse Papers"), KeyboardButton(text="🔍 Search Subject")],
-            [KeyboardButton(text="📊 Bot Statistics")]
+            [KeyboardButton(text="🙋‍♂️ Request Paper"), KeyboardButton(text="📊 Bot Statistics")]
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -194,7 +174,6 @@ def get_year_keyboard(code: str, level: str, semester: str):
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    # Sends the persistent menu keyboard along with the greeting inline option
     await message.answer(
         f"👋 Welcome {message.from_user.first_name}!\n\n"
         f"📚 *University Faculty Resource Bot*\n"
@@ -203,7 +182,6 @@ async def cmd_start(message: types.Message):
         reply_markup=get_persistent_main_menu(),
         parse_mode="Markdown"
     )
-    # Also displays the quick inline options
     await message.answer(
         "⚡ Quick Menu:",
         reply_markup=get_start_keyboard()
@@ -221,7 +199,6 @@ async def back_to_start(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-# Handle the text message triggered by pressing the persistent "📂 Browse Papers" button
 @dp.message(F.text == "📂 Browse Papers")
 async def process_persistent_browse(message: types.Message):
     await message.answer(
@@ -230,20 +207,30 @@ async def process_persistent_browse(message: types.Message):
         parse_mode="Markdown"
     )
 
-# Handle the text message triggered by pressing the persistent "🔍 Search Subject" button
 @dp.message(F.text == "🔍 Search Subject")
 async def process_persistent_search(message: types.Message):
     await message.answer(
         f"🔍 *Search by Subject Code or Name*\n\n"
         f"Type the subject code or keywords and send:\n\n"
-        f"Example: `TICT2113` or `Structured Programming`",
+        f"Example: `TICT2113` or `Data Structures`",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Back", callback_data="back_to_start")]
         ])
     )
 
-# Handle the text message triggered by pressing the persistent "📊 Bot Statistics" button
+@dp.message(F.text == "🙋‍♂️ Request Paper")
+async def process_persistent_request(message: types.Message):
+    await message.answer(
+        "🙋‍♂️ *How to request a paper:*\n\n"
+        "1. Use the *📂 Browse Papers* or *🔍 Search Subject* buttons to find your subject.\n"
+        "2. If no papers are found, a **[🙋‍♂️ Request this Subject]** button will appear.\n"
+        "3. Click it, and the admins will be notified instantly!\n\n"
+        "Alternatively, you can manually request by typing:\n"
+        "`/request SUBJECT_CODE` (e.g., `/request TICT2113`)",
+        parse_mode="Markdown"
+    )
+
 @dp.message(F.text == "📊 Bot Statistics")
 async def process_persistent_stats(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -266,6 +253,77 @@ async def process_persistent_stats(message: types.Message):
         f"📁 Total files: *{total}*\n\n"
         f"📚 By level:\n{level_stats}",
         parse_mode="Markdown"
+    )
+
+# ==========================================
+# Paper Request Feature (Command & Callback)
+# ==========================================
+
+@dp.message(Command("request"))
+async def manual_paper_request(message: types.Message):
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("⚠️ Please specify the subject code.\nExample: `/request TICT2113`", parse_mode="Markdown")
+        return
+    
+    code = parts[1].strip().upper()
+    if code not in SUBJECTS:
+        await message.answer(f"❌ Unknown subject code: `{code}`.\nPlease check the handbook and try again.", parse_mode="Markdown")
+        return
+        
+    subject_name = SUBJECTS[code][0]
+    user = message.from_user
+    username_display = f"(@{user.username})" if user.username else ""
+
+    # Notify Admins
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(
+                chat_id=admin_id,
+                text=f"🙋‍♂️ *Manual Paper Request*\n\n"
+                     f"👤 *Student:* {user.first_name} {username_display}\n"
+                     f"📚 *Subject:* {subject_name}\n"
+                     f"🔑 *Code:* `{code}`\n\n"
+                     f"Please upload this to the channel when available.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+    
+    await message.answer(f"✅ Your request for *{subject_name}* (`{code}`) has been sent to the admins!", parse_mode="Markdown")
+
+@dp.callback_query(F.data.startswith("req_"))
+async def handle_inline_paper_request(callback: types.CallbackQuery):
+    code = callback.data.split("_")[1]
+    subject_name = SUBJECTS.get(code, ("Unknown",))[0]
+    user = callback.from_user
+    username_display = f"(@{user.username})" if user.username else ""
+
+    # Notify Admins
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(
+                chat_id=admin_id,
+                text=f"🙋‍♂️ *Paper Request (From Browse)*\n\n"
+                     f"👤 *Student:* {user.first_name} {username_display}\n"
+                     f"📚 *Subject:* {subject_name}\n"
+                     f"🔑 *Code:* `{code}`\n\n"
+                     f"Please upload this to the channel when available.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+    
+    await callback.answer("✅ Request sent successfully to the admins!", show_alert=True)
+    
+    # Update the message so they don't click it multiple times
+    await callback.message.edit_text(
+        f"✅ Your request for *{subject_name}* (`{code}`) has been forwarded to the admins.\n\n"
+        f"You will be able to download it here once it is uploaded.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Back to Main Menu", callback_data="back_to_start")]
+        ])
     )
 
 # ==========================================
@@ -320,8 +378,14 @@ async def download_all(callback: types.CallbackQuery):
         return
 
     if not results:
-        await callback.message.answer(
-            f"⚠️ No papers found for Level {level} Semester {semester} yet."
+        request_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Back", callback_data=f"level_{level}")]
+        ])
+        await callback.message.edit_text(
+            f"⚠️ No papers found for Level {level} Semester {semester} yet.\n\n"
+            f"Please browse by individual subject to request missing papers.",
+            parse_mode="Markdown",
+            reply_markup=request_kb
         )
         await callback.answer()
         return
@@ -334,10 +398,19 @@ async def download_all(callback: types.CallbackQuery):
 
     for r in results:
         subject_name = SUBJECTS.get(r["subject_code"], ("Unknown",))[0]
+        
+        # Display indicator for Theory or Practical
+        p_type = r.get("paper_type", "Standard")
+        type_label = ""
+        if p_type == "Theory":
+            type_label = " 📚 [Theory]"
+        elif p_type == "Practical":
+            type_label = " 💻 [Practical]"
+
         await bot.send_document(
             chat_id=callback.from_user.id,
             document=r["file_id"],
-            caption=f"📄 *{subject_name}*\n"
+            caption=f"📄 *{subject_name}*{type_label}\n"
                     f"`{r['subject_code']}` | Year {r['year']} | Sem {r['semester']}",
             parse_mode="Markdown"
         )
@@ -373,10 +446,17 @@ async def process_subject(callback: types.CallbackQuery):
     keyboard = get_year_keyboard(code, level, semester)
 
     if not keyboard:
-        await callback.message.answer(
-            f"⚠️ No papers found for *{subject_name}* yet.\n"
-            f"Check back later!",
-            parse_mode="Markdown"
+        # If no papers found, show the Request button
+        request_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🙋‍♂️ Request this Subject", callback_data=f"req_{code}")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data=f"sem_{semester}_{level}")]
+        ])
+        
+        await callback.message.edit_text(
+            f"⚠️ No papers found for *{subject_name}* (`{code}`) yet.\n\n"
+            f"Would you like to request the admins to upload it?",
+            parse_mode="Markdown",
+            reply_markup=request_kb
         )
         await callback.answer()
         return
@@ -389,33 +469,44 @@ async def process_subject(callback: types.CallbackQuery):
     await callback.answer()
 
 # ==========================================
-# Download Single Paper
+# Download Single Paper (Supports Theory & Practical)
 # ==========================================
 
 @dp.callback_query(F.data.startswith("get_"))
 async def download_file(callback: types.CallbackQuery):
     parts = callback.data.split("_")
     code, year, semester = parts[1], parts[2], parts[3]
-    target_id = f"{code}_{year}_{semester}"
     subject_name = SUBJECTS.get(code, ("Unknown",))[0]
 
     try:
-        db_result = files_col.find_one({"custom_id": target_id})
+        # Search the database for ALL papers matching the code and year
+        db_results = list(files_col.find({"subject_code": code, "year": year}))
     except Exception as e:
         await callback.message.answer(f"❌ Database error: {e}")
         await callback.answer()
         return
 
-    if db_result:
-        # UX Enhancement: Notify user via quick toast message
-        await callback.answer(text="📄 Downloading your past paper. Please wait...", show_alert=False)
-        await bot.send_document(
-            chat_id=callback.from_user.id,
-            document=db_result["file_id"],
-            caption=f"📄 *{subject_name}*\n"
-                    f"`{code}` | Year {year} | Sem {semester}",
-            parse_mode="Markdown"
-        )
+    if db_results:
+        await callback.answer(text="📄 Downloading your past paper(s). Please wait...", show_alert=False)
+        
+        # Loop through found results (Will send both Theory and Practical if they exist)
+        for doc in db_results:
+            p_type = doc.get("paper_type", "Standard")
+            
+            # Format label based on the paper type
+            type_label = ""
+            if p_type == "Theory":
+                type_label = " 📚 [Theory]"
+            elif p_type == "Practical":
+                type_label = " 💻 [Practical]"
+                
+            await bot.send_document(
+                chat_id=callback.from_user.id,
+                document=doc["file_id"],
+                caption=f"📄 *{subject_name}*{type_label}\n"
+                        f"`{code}` | Year {year} | Sem {semester}",
+                parse_mode="Markdown"
+            )
     else:
         await callback.message.answer(
             f"⚠️ No paper found for *{subject_name}* ({year}).\n"
@@ -449,33 +540,29 @@ async def search_prompt(callback: types.CallbackQuery):
 async def handle_search(message: types.Message):
     query = message.text.strip()
 
-    # Ignore command messages
     if query.startswith("/"):
         return
 
-    # Check if user clicked the persistent buttons instead of searching text
-    if query in ["📂 Browse Papers", "🔍 Search Subject", "📊 Bot Statistics"]:
+    if query in ["📂 Browse Papers", "🔍 Search Subject", "📊 Bot Statistics", "🙋‍♂️ Request Paper"]:
         return
 
-    # Create a lookup dictionary mapping descriptive names to subject codes
     choices = {}
     for code, info in SUBJECTS.items():
         choice_str = f"{code} {info[0]}"
         choices[choice_str] = code
 
-    # Extract top 5 closest matches using user input string
     extracts = process.extract(query, choices.keys(), limit=5)
     valid_matches = [match for match in extracts if match[1] >= 50]
 
     if not valid_matches:
         await message.answer(
             f"❌ No matching subjects found for *\"{query}\"*.\n\n"
-            f"💡 Try using key words like `Programming`, `Database`, `Maths` or the exact code like `TICT2113`.",
+            f"💡 Try using key words like `Programming`, `Database`, `Maths` or the exact code like `TICT2113`.\n"
+            f"If the subject is missing, you can type `/request SUBJECT_CODE`.",
             parse_mode="Markdown"
         )
         return
 
-    # Build dynamically constructed buttons based on matching scores
     buttons = []
     for choice_text, score in valid_matches:
         code = choices[choice_text]
@@ -497,7 +584,7 @@ async def handle_search(message: types.Message):
     )
 
 # ==========================================
-# Channel: Auto Save File ID
+# Channel: Auto Save File ID (Updated for T & P)
 # ==========================================
 
 @dp.channel_post(F.document)
@@ -514,14 +601,22 @@ async def handle_channel_upload(post: types.Message):
     file_name = post.document.file_name
     telegram_file_id = post.document.file_id
 
-    if not file_name.endswith(".pdf"):
+    if not file_name.lower().endswith(".pdf"):
         print(f"❌ Document ignored (Not a PDF): {file_name}")
         return
 
     try:
-        clean_name = file_name.replace(".pdf", "")
-        subject_code, year, semester = clean_name.split("_")
+        # Safely remove .pdf extension to process the naming convention
+        clean_name = file_name[:-4] 
+        parts = clean_name.split("_")
 
+        if len(parts) < 2:
+            raise ValueError("File name does not match required structure.")
+
+        subject_code = parts[0].upper()
+        year = parts[1]
+
+        # Ensure the subject code exists in our official dictionary
         if subject_code not in SUBJECTS:
             await bot.send_message(
                 chat_id=post.chat.id,
@@ -530,11 +625,24 @@ async def handle_channel_upload(post: types.Message):
             )
             return
 
+        semester = SUBJECTS[subject_code][2]
+        subject_name = SUBJECTS[subject_code][0]
+
+        # Determine if it is a Theory (T), Practical (P), or Standard paper
+        paper_type = "Standard"
+        if len(parts) > 2:
+            last_part = parts[-1].upper()
+            if last_part == 'T':
+                paper_type = "Theory"
+            elif last_part == 'P':
+                paper_type = "Practical"
+
         document_data = {
-            "custom_id": f"{subject_code}_{year}_{semester}",
+            "custom_id": f"{subject_code}_{year}_{paper_type}", # Now safely unique
             "subject_code": subject_code,
             "year": year,
             "semester": semester,
+            "paper_type": paper_type,
             "file_id": telegram_file_id
         }
 
@@ -544,15 +652,17 @@ async def handle_channel_upload(post: types.Message):
             upsert=True
         )
 
-        subject_name = SUBJECTS[subject_code][0]
-        print(f"✅ Saved to DB: {subject_code} | Year {year} | Sem {semester}")
+        # Send a highly detailed confirmation message to the admin channel
+        type_str = f" [{paper_type}]" if paper_type != "Standard" else ""
+        print(f"✅ Saved to DB: {subject_code} | Year {year} | Sem {semester} | Type: {paper_type}")
 
         await bot.send_message(
             chat_id=post.chat.id,
             text=f"✅ *Saved successfully to Database!*\n\n"
                  f"📚 *Subject:* {subject_name}\n"
                  f"🔑 *Code:* `{subject_code}`\n"
-                 f"📅 *Year:* {year} | *Semester:* {semester}",
+                 f"📅 *Year:* {year} | *Semester:* {semester}\n"
+                 f"🔖 *Type:* {paper_type}{type_str}",
             parse_mode="Markdown"
         )
 
@@ -560,8 +670,10 @@ async def handle_channel_upload(post: types.Message):
         await bot.send_message(
             chat_id=post.chat.id,
             text=f"❌ *Invalid file name format:* `{file_name}`\n\n"
-                 f"💡 Correct format: `SUBJECTCODE_YEAR_SEM.pdf`\n"
-                 f"Example: `TICT1213_2022_2.pdf`",
+                 f"💡 Correct formats:\n"
+                 f"`SUBJECTCODE_YEAR.pdf` (Standard)\n"
+                 f"`SUBJECTCODE_YEAR_T.pdf` (Theory)\n"
+                 f"`SUBJECTCODE_YEAR_P.pdf` (Practical)",
             parse_mode="Markdown"
         )
     except Exception as e:
