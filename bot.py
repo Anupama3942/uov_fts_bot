@@ -2,7 +2,12 @@ import os
 import asyncio
 from datetime import datetime
 from thefuzz import process
+
+# අලුත් Async Firestore Client එක සහ Filters
+from google.cloud.firestore import AsyncClient
 from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud.firestore_v1.aggregation import AggregationQuery
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
@@ -10,26 +15,22 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
 
-import firebase_admin
-from firebase_admin import credentials, firestore
-
 # Load environment variables
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # @username format
+CHANNEL_ID = os.getenv("CHANNEL_ID")  
 FIREBASE_KEY_PATH = os.getenv("FIREBASE_KEY_PATH", "firebase.json")
-
-# Admin Telegram User IDs
 ADMIN_IDS = [1650090885]
 
 # Connect Bot
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Initialize Firebase Firestore
-cred = credentials.Certificate(FIREBASE_KEY_PATH)
-firebase_admin.initialize_app(cred)
-db = firestore.client()
+# ==========================================
+# 🚀 NEW: Async Firestore Initialization
+# ==========================================
+# මෙතැන් සිට firebase_admin වෙනුවට AsyncClient භාවිතා වේ.
+db = AsyncClient.from_service_account_info(FIREBASE_KEY_PATH) if not os.path.exists(FIREBASE_KEY_PATH) else AsyncClient.from_service_account_json(FIREBASE_KEY_PATH)
 
 # Database Collections
 files_col = db.collection("academic_resources")
@@ -37,9 +38,8 @@ pending_col = db.collection("pending_resources")
 users_col = db.collection("bot_users")
 
 # ==========================================
-# Verified Course List (from 2020 Handbook)
+# Verified Course List
 # ==========================================
-
 SUBJECTS = {
     # LEVEL 1 - Semester 1
     "TICT1114": ("Essentials of ICT", 1, 1),
@@ -115,28 +115,26 @@ def get_subjects_for(level: int, semester: int):
         if info[1] == level and info[2] == semester
     }
 
-# ==========================================
-# FSM States for Note Uploading
-# ==========================================
 class UploadForm(StatesGroup):
     waiting_for_subject = State()
     waiting_for_category = State()
     waiting_for_file = State()
 
 # ==========================================
-# 👤 User Tracking Helper
+# 👤 Async User Tracking
 # ==========================================
 async def track_user(user: types.User):
     doc_ref = users_col.document(str(user.id))
-    if not doc_ref.get().exists:
-        doc_ref.set({
+    doc = await doc_ref.get() # ASYNC GET
+    if not doc.exists:
+        await doc_ref.set({ # ASYNC SET
             "first_name": user.first_name,
             "username": user.username if user.username else "",
             "joined_at": datetime.now()
         })
 
 # ==========================================
-# Keyboards
+# Keyboards & UI
 # ==========================================
 def get_persistent_main_menu():
     return ReplyKeyboardMarkup(
@@ -201,12 +199,18 @@ def get_category_menu(code: str, level: str, semester: str):
         [InlineKeyboardButton(text="⬅️ Back", callback_data=f"bysubject_{level}_{semester}")]
     ])
 
-def get_year_keyboard(code: str, level: str, semester: str):
+# දැන් Database එකට යන නිසා async function එකක් විය යුතුයි
+async def get_year_keyboard(code: str, level: str, semester: str):
     try:
-        # Fetch available years specifically for Past Papers category
+        query = files_col.where(filter=FieldFilter("subject_code", "==", code)).where(filter=FieldFilter("category", "==", "Past Paper"))
+        years = set()
         
-        docs = files_col.where(filter=FieldFilter("subject_code", "==", code)).where(filter=FieldFilter("category", "==", "Past Paper")).stream()
-        years = {doc.to_dict().get("year") for doc in docs}
+        # ASYNC STREAM
+        async for doc in query.stream():
+            data = doc.to_dict()
+            if "year" in data:
+                years.add(data["year"])
+                
         available_years = sorted(list(years), reverse=True)
     except Exception:
         available_years = []
@@ -238,7 +242,7 @@ def get_rating_keyboard(doc_id: str):
     ])
 
 # ==========================================
-# Start and Main Menu Handlers
+# Core Handlers
 # ==========================================
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -303,6 +307,9 @@ async def process_persistent_request(message: types.Message):
         parse_mode="Markdown"
     )
 
+# ==========================================
+# 📊 Optimized Async Bot Statistics
+# ==========================================
 @dp.message(F.text == "📊 Bot Statistics")
 async def process_persistent_stats(message: types.Message):
     await track_user(message.from_user)
@@ -311,14 +318,21 @@ async def process_persistent_stats(message: types.Message):
         return
 
     try:
-        all_docs = [doc.to_dict() for doc in files_col.stream()]
-        total = len(all_docs)
+        # ASYNC AGGREGATION QUERIES (Highly efficient, no bandwidth wasted)
+        count_query = await files_col.count().get()
+        total = count_query[0][0].value
         
+        # Async stream for detailed mapping
+        all_docs = []
+        async for doc in files_col.stream():
+            all_docs.append(doc.to_dict())
+            
         level_stats = ""
         for level in [1, 2, 3, 4]:
             codes = [c for c, info in SUBJECTS.items() if info[1] == level]
             count = sum(1 for d in all_docs if d.get("subject_code") in codes)
             level_stats += f"• Level {level}: {count} file(s)\n"
+            
     except Exception as e:
         await message.answer(f"❌ Database error: {e}")
         return
@@ -330,13 +344,10 @@ async def process_persistent_stats(message: types.Message):
         parse_mode="Markdown"
     )
 
-# ==========================================
-# ⏳ Exam Countdown Tracker
-# ==========================================
 @dp.message(Command("countdown"))
 async def cmd_countdown(message: types.Message):
     await track_user(message.from_user)
-    exam_date = datetime(2026, 7, 15, 9, 0)  # විභාග දිනය මෙතනින් සකසන්න
+    exam_date = datetime(2026, 7, 15, 9, 0)
     now = datetime.now()
     
     if now > exam_date:
@@ -351,9 +362,6 @@ async def cmd_countdown(message: types.Message):
             parse_mode="Markdown"
         )
 
-# ==========================================
-# 📢 Admin Broadcast Feature
-# ==========================================
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -365,9 +373,8 @@ async def cmd_broadcast(message: types.Message):
         return
 
     try:
-        users = users_col.stream()
         count = 0
-        for u in users:
+        async for u in users_col.stream(): # ASYNC STREAM
             try:
                 await bot.send_message(chat_id=int(u.id), text=f"📢 *Important Announcement:*\n\n{broadcast_msg}", parse_mode="Markdown")
                 count += 1
@@ -378,17 +385,13 @@ async def cmd_broadcast(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Broadcast failed: {e}")
 
-# ==========================================
-# 🏆 Contribution Leaderboard
-# ==========================================
 @dp.message(F.text == "🏆 Leaderboard")
 @dp.message(Command("leaderboard"))
 async def show_leaderboard(message: types.Message):
     await track_user(message.from_user)
     try:
-        docs = files_col.stream()
         contributors = {}
-        for doc in docs:
+        async for doc in files_col.stream(): # ASYNC STREAM
             data = doc.to_dict()
             name = data.get("uploader_name")
             if name and data.get("category") in ["Lecture Note", "Short Note"]:
@@ -410,125 +413,131 @@ async def show_leaderboard(message: types.Message):
         await message.answer(f"❌ Error loading leaderboard: {e}")
 
 # ==========================================
-# 📤 Student Upload Flow (FSM)
+# 📤 User Document Upload (Async Writes)
 # ==========================================
 @dp.message(F.text == "📤 Upload Note")
-async def process_upload_start(message: types.Message, state: FSMContext):
+async def process_upload_start(message: types.Message):
     await track_user(message.from_user)
-    await state.set_state(UploadForm.waiting_for_subject)
-    await message.answer(
-        "📤 *Community Resource Upload*\n\n"
-        "Please type and send the *Subject Code* (e.g., `TICT2113`):",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Cancel Upload", callback_data="cancel_upload")]
-        ])
+    instructions = (
+        "📤 *Community Resource Upload Guide*\n\n"
+        "Students can upload **Lecture Notes** or **Short Notes** directly into this chat window. "
+        "To ensure our validation system parses it properly, you **must rename your PDF** using the structure outlined below before sending:\n\n"
+        "• 📂 *For Lecture Notes / Slides:*\n"
+        "`SUBJECTCODE_NOTE_TopicName.pdf`\n"
+        "↳ _Example: `TICT2142_NOTE_RequirementsEngineering.pdf`_\n\n"
+        "• 📝 *For Student Short Notes:*\n"
+        "`SUBJECTCODE_SNOTE_TopicName.pdf`\n"
+        "↳ _Example: `TICT2142_SNOTE_NormalizationRules.pdf`_\n\n"
+        "⚠️ *Note:* All community note submissions are held in a pending queue for Admin verification before going live. "
+        "Past Papers can only be submitted via Batch Admins."
     )
+    await message.answer(instructions, parse_mode="Markdown")
 
-@dp.callback_query(F.data == "cancel_upload")
-async def cancel_upload(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("❌ Upload process cancelled.")
-    await callback.answer()
 
-@dp.message(StateFilter(UploadForm.waiting_for_subject))
-async def process_upload_subject(message: types.Message, state: FSMContext):
-    code = message.text.strip().upper()
-    if code not in SUBJECTS:
-        await message.answer(
-            "❌ Invalid Subject Code. Please enter a valid code from the handbook (e.g., `TICT1114`):",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="❌ Cancel Upload", callback_data="cancel_upload")]
-            ])
-        )
-        return
-
-    await state.update_data(subject_code=code)
-    await state.set_state(UploadForm.waiting_for_category)
-    
-    cat_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👨‍🏫 Lecturer Note / Slide", callback_data="uploadcat_Lecture Note")],
-        [InlineKeyboardButton(text="📝 Student Short Note", callback_data="uploadcat_Short Note")],
-        [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_upload")]
-    ])
-    await message.answer(f"✅ Subject found: *{SUBJECTS[code][0]}*\n\nSelect the resource category:", reply_markup=cat_kb, parse_mode="Markdown")
-
-@dp.callback_query(F.data.startswith("uploadcat_"), StateFilter(UploadForm.waiting_for_category))
-async def process_upload_category(callback: types.CallbackQuery, state: FSMContext):
-    category = callback.data.split("_")[1]
-    await state.update_data(category=category)
-    await state.set_state(UploadForm.waiting_for_file)
-    
-    await callback.message.edit_text(
-        f"✅ Category set to: *{category}*\n\n"
-        f"Please send the *PDF document file* now.",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Cancel Upload", callback_data="cancel_upload")]
-        ])
-    )
-    await callback.answer()
-
-@dp.message(F.document, StateFilter(UploadForm.waiting_for_file))
-async def process_upload_file(message: types.Message, state: FSMContext):
-    if not message.document.file_name.lower().endswith(".pdf"):
-        await message.answer("❌ Invalid format. Please upload your file as a PDF document.")
-        return
-
-    data = await state.get_data()
-    subject_code = data['subject_code']
-    category = data['category']
-    file_id = message.document.file_id
+@dp.message(F.chat.type == "private", F.document)
+async def handle_user_document_submission(message: types.Message):
     file_name = message.document.file_name
+    telegram_file_id = message.document.file_id
+    uploader_name = message.from_user.first_name
+    uploader_id = message.from_user.id
 
-    # Save to Pending Approval Collection
-    doc_ref = pending_col.document()
-    doc_ref.set({
-        "id": doc_ref.id,
-        "subject_code": subject_code,
-        "category": category,
-        "file_id": file_id,
-        "file_name": file_name,
-        "uploader_id": message.from_user.id,
-        "uploader_name": message.from_user.first_name,
-        "upload_date": datetime.now()
-    })
+    if not file_name.lower().endswith(".pdf"):
+        await message.answer("❌ Only documents formatted as a **PDF file** are accepted.")
+        return
 
-    await state.clear()
-    await message.answer("✅ Sent! Your file has been submitted to the Admins for review. It will be live once approved! 🎉")
+    try:
+        clean_name = file_name[:-4] 
+        parts = clean_name.split("_")
 
-    # Notify Admins
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Approve", callback_data=f"admin_approve_{doc_ref.id}"),
-            InlineKeyboardButton(text="❌ Reject", callback_data=f"admin_reject_{doc_ref.id}")
-        ]
-    ])
-    
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_document(
-                chat_id=admin_id,
-                document=file_id,
-                caption=f"🛡️ *Pending Contribution Approval*\n\n"
-                        f"👤 *By:* {message.from_user.first_name}\n"
-                        f"📚 *Subject:* {SUBJECTS[subject_code][0]} (`{subject_code}`)\n"
-                        f"🔖 *Category:* {category}\n"
-                        f"📄 *File:* {file_name}",
-                parse_mode="Markdown",
-                reply_markup=admin_kb
-            )
-        except Exception:
-            pass
+        if len(parts) < 3:
+            raise ValueError("Structure length mismatch")
+
+        subject_code = parts[0].upper()
+        doc_type = parts[1].upper()
+        topic_title = " ".join(parts[2:])
+
+        if subject_code not in SUBJECTS:
+            await message.answer(f"❌ *Unknown Subject Code:* `{subject_code}`\nPlease verify your course code.")
+            return
+
+        if doc_type == "NOTE":
+            category = "Lecture Note"
+        elif doc_type == "SNOTE":
+            category = "Short Note"
+        else:
+            raise ValueError("Invalid flag parameter")
+
+        sanitized_topic = "".join(e for e in topic_title if e.isalnum())
+        custom_id = f"{subject_code}_{doc_type}_{sanitized_topic}_{uploader_id}"
+
+        pending_data = {
+            "id": custom_id,
+            "subject_code": subject_code,
+            "category": category,
+            "file_id": telegram_file_id,
+            "file_name": file_name,
+            "uploader_id": uploader_id,
+            "uploader_name": uploader_name,
+            "upload_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "topic": topic_title
+        }
+
+        # ASYNC SET TO DATABASE
+        await pending_col.document(custom_id).set(pending_data)
+
+        success_response = (
+            f"📥 *Resource Submission Received!*\n\n"
+            f"📚 *Classification:* {category}\n"
+            f"🔑 *Module Code:* `{subject_code}`\n"
+            f"📝 *Topic Name:* {topic_title}\n\n"
+            f"⏳ Your file was forwarded to the verification staging environment. "
+            f"You will get an automated alert once reviewed."
+        )
+        await message.answer(success_response, parse_mode="Markdown")
+
+        admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Approve", callback_data=f"admin_approve_{custom_id}"),
+                InlineKeyboardButton(text="❌ Reject", callback_data=f"admin_reject_{custom_id}")
+            ]
+        ])
+        
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_document(
+                    chat_id=admin_id,
+                    document=telegram_file_id,
+                    caption=f"🛡️ *Staging Review Notification*\n\n"
+                            f"👤 *Contributor:* {uploader_name}\n"
+                            f"📚 *Subject:* {SUBJECTS[subject_code][0]} (`{subject_code}`)\n"
+                            f"🔖 *Category:* {category}\n"
+                            f"📝 *Topic:* {topic_title}",
+                    parse_mode="Markdown",
+                    reply_markup=admin_kb
+                )
+            except Exception:
+                pass
+
+    except ValueError:
+        error_explanation = (
+            "❌ *Invalid Structural Naming Rule!*\n\n"
+            "Please apply the correct filename design architecture pattern before uploading:\n\n"
+            "• **Lecture Notes:** `CODE_NOTE_Topic.pdf`\n"
+            "• **Short Notes:** `CODE_SNOTE_Topic.pdf`"
+        )
+        await message.answer(error_explanation, parse_mode="Markdown")
+    except Exception as e:
+        print(f"❌ Structural parse failure: {e}")
+        await message.answer("⚠️ System error encountered structural runtime validation failure mapping resource tokens.")
 
 # ==========================================
-# 🛡️ Admin Verification Handlers
+# 🛡️ Admin Verification (Async Update)
 # ==========================================
 @dp.callback_query(F.data.startswith("admin_approve_"))
 async def admin_approve_handler(callback: types.CallbackQuery):
     doc_id = callback.data.split("_")[2]
     doc_ref = pending_col.document(doc_id)
-    doc = doc_ref.get()
+    doc = await doc_ref.get() # ASYNC GET
 
     if not doc.exists:
         await callback.answer("Resource already processed!", show_alert=True)
@@ -539,9 +548,9 @@ async def admin_approve_handler(callback: types.CallbackQuery):
     data["rating_count"] = 0
     data["semester"] = SUBJECTS[data["subject_code"]][2]
     
-    # Move to active collection
-    files_col.document(doc_id).set(data)
-    doc_ref.delete()
+    # ASYNC SET & DELETE
+    await files_col.document(doc_id).set(data)
+    await doc_ref.delete()
 
     await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n✅ *APPROVED BY ADMIN*")
     await callback.answer("Approved and added to database!")
@@ -559,14 +568,14 @@ async def admin_approve_handler(callback: types.CallbackQuery):
 async def admin_reject_handler(callback: types.CallbackQuery):
     doc_id = callback.data.split("_")[2]
     doc_ref = pending_col.document(doc_id)
-    doc = doc_ref.get()
+    doc = await doc_ref.get() # ASYNC GET
 
     if not doc.exists:
         await callback.answer("Resource already processed!", show_alert=True)
         return
 
     data = doc.to_dict()
-    doc_ref.delete()
+    await doc_ref.delete() # ASYNC DELETE
 
     await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n❌ *REJECTED BY ADMIN*")
     await callback.answer("Upload rejected.")
@@ -586,7 +595,7 @@ async def process_rating(callback: types.CallbackQuery):
     stars = int(parts[2])
 
     doc_ref = files_col.document(doc_id)
-    doc = doc_ref.get()
+    doc = await doc_ref.get() # ASYNC GET
 
     if not doc.exists:
         await callback.answer("This file no longer exists.", show_alert=True)
@@ -596,13 +605,13 @@ async def process_rating(callback: types.CallbackQuery):
     new_sum = data.get("rating_sum", 0) + stars
     new_count = data.get("rating_count", 0) + 1
     
-    doc_ref.update({"rating_sum": new_sum, "rating_count": new_count})
+    await doc_ref.update({"rating_sum": new_sum, "rating_count": new_count}) # ASYNC UPDATE
     
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.answer(f"✅ You rated this note {stars} Stars! Thank you!", show_alert=True)
 
 # ==========================================
-# Paper Request Feature (Command & Callback)
+# Paper Request Feature
 # ==========================================
 @dp.message(Command("request"))
 async def manual_paper_request(message: types.Message):
@@ -670,7 +679,7 @@ async def handle_inline_paper_request(callback: types.CallbackQuery):
     )
 
 # ==========================================
-# Browse & Category Filtering Flow
+# Browse & Category Filtering
 # ==========================================
 @dp.callback_query(F.data == "browse")
 async def browse(callback: types.CallbackQuery):
@@ -742,7 +751,8 @@ async def handle_subcategory_view(callback: types.CallbackQuery):
     subject_name = SUBJECTS.get(code, ("Unknown",))[0]
 
     if category == "Past Paper":
-        keyboard = get_year_keyboard(code, level, semester)
+        # දැන් get_year_keyboard එක async නිසා await කරන්න ඕනේ
+        keyboard = await get_year_keyboard(code, level, semester) 
         if not keyboard:
             request_kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🙋‍♂️ Request this Subject", callback_data=f"req_{code}")],
@@ -762,10 +772,13 @@ async def handle_subcategory_view(callback: types.CallbackQuery):
             parse_mode="Markdown"
         )
     else:
-        # Fetch Lecture Notes or Student Short Notes directly
         try:
-            docs = files_col.where(filter=FieldFilter("subject_code", "==", code)).where(filter=FieldFilter("category", "==", category)).stream()
-            results = [doc for doc in docs]
+            query = files_col.where(filter=FieldFilter("subject_code", "==", code)).where(filter=FieldFilter("category", "==", category))
+            results = []
+            
+            # ASYNC STREAM
+            async for doc in query.stream():
+                results.append(doc)
         except Exception as e:
             await callback.message.answer(f"❌ Database error: {e}")
             return
@@ -807,7 +820,7 @@ async def handle_subcategory_view(callback: types.CallbackQuery):
         await callback.answer()
 
 # ==========================================
-# Download ALL Past Papers
+# Async Bulk Download
 # ==========================================
 @dp.callback_query(F.data.startswith("dlall_"))
 async def download_all(callback: types.CallbackQuery):
@@ -817,9 +830,12 @@ async def download_all(callback: types.CallbackQuery):
     subject_codes = list(subjects.keys())
 
     try:
-        # Fetching documents for multiple subject codes safely filtered by 'Past Paper' category
-        docs = files_col.where(filter=FieldFilter("subject_code", "in", subject_codes)).where(filter=FieldFilter("category", "==", "Past Paper")).stream()
-        results = [doc.to_dict() for doc in docs]
+        query = files_col.where(filter=FieldFilter("subject_code", "in", subject_codes)).where(filter=FieldFilter("category", "==", "Past Paper"))
+        results = []
+        
+        # ASYNC STREAM
+        async for doc in query.stream():
+            results.append(doc.to_dict())
     except Exception as e:
         await callback.message.answer(f"❌ Database error: {e}")
         await callback.answer()
@@ -872,8 +888,12 @@ async def download_file(callback: types.CallbackQuery):
     subject_name = SUBJECTS.get(code, ("Unknown",))[0]
 
     try:
-        docs = files_col.where(filter=FieldFilter("subject_code", "==", code)).where(filter=FieldFilter("year", "==", year)).where(filter=FieldFilter("category", "==", "Past Paper")).stream()
-        db_results = [doc.to_dict() for doc in docs]
+        query = files_col.where(filter=FieldFilter("subject_code", "==", code)).where(filter=FieldFilter("year", "==", year)).where(filter=FieldFilter("category", "==", "Past Paper"))
+        db_results = []
+        
+        # ASYNC STREAM
+        async for doc in query.stream():
+            db_results.append(doc.to_dict())
     except Exception as e:
         await callback.message.answer(f"❌ Database error: {e}")
         await callback.answer()
@@ -901,7 +921,7 @@ async def download_file(callback: types.CallbackQuery):
         await callback.answer()
 
 # ==========================================
-# Search Command Prompt
+# Fuzzy Search
 # ==========================================
 @dp.callback_query(F.data == "search")
 async def search_prompt(callback: types.CallbackQuery):
@@ -916,9 +936,6 @@ async def search_prompt(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-# ==========================================
-# Fuzzy Search
-# ==========================================
 @dp.message(F.text)
 async def handle_search(message: types.Message):
     query = message.text.strip()
@@ -966,24 +983,22 @@ async def handle_search(message: types.Message):
     )
 
 # ==========================================
-# Channel: Auto Save Past Papers (Sent to Pending Queue)
+# Channel Post Auto-Approval
 # ==========================================
 @dp.channel_post(F.document)
 async def handle_channel_upload(post: types.Message):
-    print(f"📢 Channel post received! Chat ID: {post.chat.id} | File: {post.document.file_name}")
+    print(f"📢 Admin Channel post received! File: {post.document.file_name}")
 
     current_chat_id = str(post.chat.id)
     current_username = f"@{post.chat.username}" if post.chat.username else ""
 
     if str(CHANNEL_ID) not in [current_chat_id, current_username]:
-        print(f"⚠️ Channel ID mismatch! Expected: {CHANNEL_ID}, Got: {post.chat.id}")
         return
 
     file_name = post.document.file_name
     telegram_file_id = post.document.file_id
 
     if not file_name.lower().endswith(".pdf"):
-        print(f"❌ Document ignored (Not a PDF): {file_name}")
         return
 
     try:
@@ -1017,7 +1032,6 @@ async def handle_channel_upload(post: types.Message):
 
         custom_id = f"{subject_code}_{year}_{paper_type}"
         
-        # Structure the data uniformly so the Admin Dashboard can parse it correctly
         document_data = {
             "id": custom_id,
             "subject_code": subject_code,
@@ -1028,45 +1042,43 @@ async def handle_channel_upload(post: types.Message):
             "file_id": telegram_file_id,
             "file_name": file_name,
             "uploader_id": post.chat.id,
-            "uploader_name": "Channel Admin",
-            "upload_date": datetime.now()
+            "uploader_name": "Batch Admin",
+            "upload_date": datetime.now().strftime("%Y-%m-%d %H:%M")
         }
 
-        # ✅ FIXED: Route data to the pending queue instead of releasing it immediately
-        pending_col.document(custom_id).set(document_data)
-        print(f"⏳ Sent Past Paper to Pending Queue: {subject_code} | Year {year}")
+        # ASYNC SET
+        await files_col.document(custom_id).set(document_data)
+        print(f"✅ Past Paper Auto-Approved and Published: {custom_id}")
 
         await bot.send_message(
             chat_id=post.chat.id,
-            text=f"📥 *Resource Intercepted & Held for Review!*\n\n"
+            text=f"🚀 *Resource Published Live Successfully!*\n\n"
                  f"📚 *Subject:* {subject_name}\n"
                  f"🔑 *Code:* `{subject_code}`\n"
-                 f"📅 *Year:* {year}\n\n"
-                 f"⚠️ This file has been added to the *Pending Approvals* queue. "
-                 f"Confirm it via your Admin Dashboard to make it live.",
+                 f"📅 *Year:* {year}",
             parse_mode="Markdown"
         )
 
     except ValueError:
         await bot.send_message(
             chat_id=post.chat.id,
-            text=f"❌ *Invalid file name format:* `{file_name}`\n\n"
-                 f"💡 Correct formats:\n"
-                 f"`SUBJECTCODE_YEAR.pdf` (Standard)\n"
-                 f"`SUBJECTCODE_YEAR_T.pdf` (Theory)",
+            text=f"❌ *Invalid past paper layout:* `{file_name}`\n\n"
+                 f"💡 Rule structures:\n"
+                 f"`SUBJECTCODE_YEAR.pdf`\n"
+                 f"`SUBJECTCODE_YEAR_T.pdf`",
             parse_mode="Markdown"
         )
     except Exception as e:
         print(f"❌ Error during channel sync: {e}")
 
 # ==========================================
-# Run Bot (With Auto-Retry and Timeout)
+# Run Bot 
 # ==========================================
 async def main():
     from aiogram.client.session.aiohttp import AiohttpSession
     from aiogram.exceptions import TelegramNetworkError
 
-    print("Bot is starting up. Connecting to Firebase... 🚀")
+    print("Bot is starting up. Connecting to Async Firebase... 🚀")
 
     session = AiohttpSession(timeout=120.0)
     custom_bot = Bot(token=BOT_TOKEN, session=session)
@@ -1082,8 +1094,6 @@ async def main():
             try:
                 chat = await custom_bot.get_chat(CHANNEL_ID)
                 print(f"✅ Channel found: {chat.title}")
-                member = await custom_bot.get_chat_member(CHANNEL_ID, me.id)
-                print(f"✅ Bot status in channel: {member.status}")
             except Exception as e:
                 print(f"⚠️ Channel access info: {e}")
 

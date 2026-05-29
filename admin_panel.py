@@ -22,25 +22,7 @@ db = firestore.client()
 # ==========================================
 # Web Page Configuration (Mobile Optimization)
 # ==========================================
-# Setting layout="centered" ensures the dashboard scales beautifully on mobile screens
 st.set_page_config(page_title="UOV FTS Bot - Admin", page_icon="⚙️", layout="centered")
-
-# # Inject Custom CSS for better mobile touch-targets and button spacing
-# st.markdown("""
-#     <style>
-#         /* Make buttons wider and easier to tap on mobile devices */
-#         .stButton button {
-#             width: 100%;
-#             margin-bottom: 10px;
-#             padding: 0.5rem 1rem;
-#         }
-#         /* Ensure code snippets and text wrap properly on small screens */
-#         code {
-#             white-space: pre-wrap !important;
-#             word-break: break-all !important;
-#         }
-#     </style>
-# """, unsafe_html=True)
 
 # Inject Custom CSS for better mobile touch-targets and button spacing
 st.markdown("""
@@ -57,7 +39,7 @@ st.markdown("""
             word-break: break-all !important;
         }
     </style>
-""", unsafe_allow_html=True)  # <-- Changed from unsafe_html=True to unsafe_allow_html=True
+""", unsafe_allow_html=True)
 
 st.title("🛠️ Admin Dashboard")
 st.caption("UOV FTS Bot Management Portal")
@@ -88,7 +70,7 @@ st.subheader("⏳ Pending Review")
 pending_docs = list(db.collection("pending_resources").stream())
 
 if not pending_docs:
-    st.info("🎉 No pending resources to review.")
+    st.info("🎉 No pending notes to review.")
 else:
     for doc in pending_docs:
         data = doc.to_dict()
@@ -98,20 +80,22 @@ else:
         subject_code = data.get("subject_code", "Unknown")
         subject_name = SUBJECTS.get(subject_code, ("Unknown",))[0]
         semester = SUBJECTS.get(subject_code, ("", "", 1))[2]
+        topic = data.get("topic", None)
         
         # Clean mobile-friendly header for the expander container
         expander_title = f"📄 {subject_code} ({data.get('category')})"
         
         with st.expander(expander_title):
             st.markdown(f"**Subject:** {subject_name}")
+            if topic:
+                st.markdown(f"**Topic/Title:** {topic}")
             st.markdown(f"**Uploader:** {data.get('uploader_name')} ({data.get('uploader_id')})")
             st.markdown(f"**File Name:** `{data.get('file_name')}`")
             st.markdown(f"**Uploaded:** {data.get('upload_date')}")
             
             st.write("---")
             
-            # Using 2 equal columns so buttons sit side-by-side on desktop 
-            # but stack smoothly on narrow mobile viewports
+            # Action button matrix
             btn_col1, btn_col2 = st.columns(2)
             
             # ---------------------------------
