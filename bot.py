@@ -966,7 +966,7 @@ async def handle_search(message: types.Message):
     )
 
 # ==========================================
-# Channel: Auto Save Past Papers
+# Channel: Auto Save Past Papers (Sent to Pending Queue)
 # ==========================================
 @dp.channel_post(F.document)
 async def handle_channel_upload(post: types.Message):
@@ -1016,25 +1016,34 @@ async def handle_channel_upload(post: types.Message):
                 paper_type = "Practical"
 
         custom_id = f"{subject_code}_{year}_{paper_type}"
+        
+        # Structure the data uniformly so the Admin Dashboard can parse it correctly
         document_data = {
-            "custom_id": custom_id,
+            "id": custom_id,
             "subject_code": subject_code,
             "year": year,
             "semester": semester,
             "paper_type": paper_type,
             "category": "Past Paper",
-            "file_id": telegram_file_id
+            "file_id": telegram_file_id,
+            "file_name": file_name,
+            "uploader_id": post.chat.id,
+            "uploader_name": "Channel Admin",
+            "upload_date": datetime.now()
         }
 
-        files_col.document(custom_id).set(document_data)
-        print(f"✅ Saved Past Paper to DB: {subject_code} | Year {year}")
+        # ✅ FIXED: Route data to the pending queue instead of releasing it immediately
+        pending_col.document(custom_id).set(document_data)
+        print(f"⏳ Sent Past Paper to Pending Queue: {subject_code} | Year {year}")
 
         await bot.send_message(
             chat_id=post.chat.id,
-            text=f"✅ *Saved Past Paper to Firebase Database!*\n\n"
+            text=f"📥 *Resource Intercepted & Held for Review!*\n\n"
                  f"📚 *Subject:* {subject_name}\n"
                  f"🔑 *Code:* `{subject_code}`\n"
-                 f"📅 *Year:* {year} | *Category:* Past Paper",
+                 f"📅 *Year:* {year}\n\n"
+                 f"⚠️ This file has been added to the *Pending Approvals* queue. "
+                 f"Confirm it via your Admin Dashboard to make it live.",
             parse_mode="Markdown"
         )
 
