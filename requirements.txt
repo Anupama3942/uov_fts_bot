@@ -1,5 +1,16 @@
-aiogram
-python-dotenv
-#pymongo[srv]
-thefuzz
-firebase-admin
+# =========================================
+# UOV Super Bot — Requirements
+# =========================================
+
+# Telegram Bot Framework
+aiogram==3.28.2
+
+# Firebase / Firestore Database
+firebase-admin==7.4.0
+
+# Fuzzy Subject Code Search
+thefuzz==0.22.1
+python-Levenshtein==0.27.3
+
+# Environment Variables (.env file)
+python-dotenv==1.2.2
