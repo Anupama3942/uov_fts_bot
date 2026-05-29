@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 firebase.jsonfirebase.json
 firebase.json
+firebase-debug.log
+firebase-debug.log
+firebase-debug.log

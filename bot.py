@@ -1,29 +1,31 @@
 import os
-import ssl
 import asyncio
 from thefuzz import process
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
-from pymongo import MongoClient
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # Load environment variables
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-MONGO_URI = os.getenv("MONGO_URI")
 CHANNEL_ID = os.getenv("CHANNEL_ID")  # @username format
+FIREBASE_KEY_PATH = os.getenv("FIREBASE_KEY_PATH", "firebase.json")
 
 # Admin Telegram User IDs
 ADMIN_IDS = [1650090885]
 
-# Connect Bot and Database
+# Connect Bot
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-cluster = MongoClient(MONGO_URI)
-db = cluster["faculty_database"]
-files_col = db["academic_resources"]
+# Initialize Firebase Firestore
+cred = credentials.Certificate(FIREBASE_KEY_PATH)
+firebase_admin.initialize_app(cred)
+db = firestore.client()
+files_col = db.collection("academic_resources")
 
 # ==========================================
 # Verified Course List (from 2020 Handbook)
@@ -109,14 +111,8 @@ def get_semester_keyboard(level: str):
 
 def get_subject_action_keyboard(level: str, semester: str):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="📥 Download All Papers",
-            callback_data=f"dlall_{level}_{semester}"
-        )],
-        [InlineKeyboardButton(
-            text="📚 Browse by Subject",
-            callback_data=f"bysubject_{level}_{semester}"
-        )],
+        [InlineKeyboardButton(text="📥 Download All Papers", callback_data=f"dlall_{level}_{semester}")],
+        [InlineKeyboardButton(text="📚 Browse by Subject", callback_data=f"bysubject_{level}_{semester}")],
         [InlineKeyboardButton(text="⬅️ Back", callback_data=f"level_{level}")]
     ])
 
@@ -125,25 +121,21 @@ def get_subjects_keyboard(level: str, semester: str):
     buttons = []
     row = []
     for code in subjects:
-        row.append(InlineKeyboardButton(
-            text=code,
-            callback_data=f"subject_{code}_{level}_{semester}"
-        ))
+        row.append(InlineKeyboardButton(text=code, callback_data=f"subject_{code}_{level}_{semester}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
-    buttons.append([InlineKeyboardButton(
-        text="⬅️ Back",
-        callback_data=f"sem_{semester}_{level}"
-    )])
+    buttons.append([InlineKeyboardButton(text="⬅️ Back", callback_data=f"sem_{semester}_{level}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_year_keyboard(code: str, level: str, semester: str):
     try:
-        available_years = files_col.distinct("year", {"subject_code": code})
-        available_years.sort(reverse=True)
+        # Fetch available years for the given subject from Firestore
+        docs = files_col.where("subject_code", "==", code).stream()
+        years = {doc.to_dict().get("year") for doc in docs}
+        available_years = sorted(list(years), reverse=True)
     except Exception:
         available_years = []
 
@@ -153,19 +145,13 @@ def get_year_keyboard(code: str, level: str, semester: str):
     buttons = []
     row = []
     for year in available_years:
-        row.append(InlineKeyboardButton(
-            text=f"📅 {year}",
-            callback_data=f"get_{code}_{year}_{semester}"
-        ))
+        row.append(InlineKeyboardButton(text=f"📅 {year}", callback_data=f"get_{code}_{year}_{semester}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
-    buttons.append([InlineKeyboardButton(
-        text="⬅️ Back",
-        callback_data=f"bysubject_{level}_{semester}"
-    )])
+    buttons.append([InlineKeyboardButton(text="⬅️ Back", callback_data=f"bysubject_{level}_{semester}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ==========================================
@@ -238,11 +224,14 @@ async def process_persistent_stats(message: types.Message):
         return
 
     try:
-        total = files_col.count_documents({})
+        # Get all docs for stats calculating locally to minimize DB reads
+        all_docs = [doc.to_dict() for doc in files_col.stream()]
+        total = len(all_docs)
+        
         level_stats = ""
         for level in [1, 2, 3, 4]:
             codes = [c for c, info in SUBJECTS.items() if info[1] == level]
-            count = files_col.count_documents({"subject_code": {"$in": codes}})
+            count = sum(1 for d in all_docs if d.get("subject_code") in codes)
             level_stats += f"• Level {level}: {count} file(s)\n"
     except Exception as e:
         await message.answer(f"❌ Database error: {e}")
@@ -275,7 +264,6 @@ async def manual_paper_request(message: types.Message):
     user = message.from_user
     username_display = f"(@{user.username})" if user.username else ""
 
-    # Notify Admins
     for admin_id in ADMIN_IDS:
         try:
             await bot.send_message(
@@ -299,7 +287,6 @@ async def handle_inline_paper_request(callback: types.CallbackQuery):
     user = callback.from_user
     username_display = f"(@{user.username})" if user.username else ""
 
-    # Notify Admins
     for admin_id in ADMIN_IDS:
         try:
             await bot.send_message(
@@ -316,7 +303,6 @@ async def handle_inline_paper_request(callback: types.CallbackQuery):
     
     await callback.answer("✅ Request sent successfully to the admins!", show_alert=True)
     
-    # Update the message so they don't click it multiple times
     await callback.message.edit_text(
         f"✅ Your request for *{subject_name}* (`{code}`) has been forwarded to the admins.\n\n"
         f"You will be able to download it here once it is uploaded.",
@@ -369,9 +355,13 @@ async def download_all(callback: types.CallbackQuery):
     parts = callback.data.split("_")
     level, semester = parts[1], parts[2]
     subjects = get_subjects_for(int(level), int(semester))
+    subject_codes = list(subjects.keys())
 
     try:
-        results = list(files_col.find({"subject_code": {"$in": list(subjects.keys())}}))
+        # Fetching documents for multiple subject codes safely using 'in' query in Firestore
+        # (Firestore 'in' supports max 10 elements, which is safe here as max codes per semester is < 8)
+        docs = files_col.where("subject_code", "in", subject_codes).stream()
+        results = [doc.to_dict() for doc in docs]
     except Exception as e:
         await callback.message.answer(f"❌ Database error: {e}")
         await callback.answer()
@@ -399,7 +389,6 @@ async def download_all(callback: types.CallbackQuery):
     for r in results:
         subject_name = SUBJECTS.get(r["subject_code"], ("Unknown",))[0]
         
-        # Display indicator for Theory or Practical
         p_type = r.get("paper_type", "Standard")
         type_label = ""
         if p_type == "Theory":
@@ -446,7 +435,6 @@ async def process_subject(callback: types.CallbackQuery):
     keyboard = get_year_keyboard(code, level, semester)
 
     if not keyboard:
-        # If no papers found, show the Request button
         request_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🙋‍♂️ Request this Subject", callback_data=f"req_{code}")],
             [InlineKeyboardButton(text="⬅️ Back", callback_data=f"sem_{semester}_{level}")]
@@ -469,7 +457,7 @@ async def process_subject(callback: types.CallbackQuery):
     await callback.answer()
 
 # ==========================================
-# Download Single Paper (Supports Theory & Practical)
+# Download Single Paper
 # ==========================================
 
 @dp.callback_query(F.data.startswith("get_"))
@@ -479,8 +467,8 @@ async def download_file(callback: types.CallbackQuery):
     subject_name = SUBJECTS.get(code, ("Unknown",))[0]
 
     try:
-        # Search the database for ALL papers matching the code and year
-        db_results = list(files_col.find({"subject_code": code, "year": year}))
+        docs = files_col.where("subject_code", "==", code).where("year", "==", year).stream()
+        db_results = [doc.to_dict() for doc in docs]
     except Exception as e:
         await callback.message.answer(f"❌ Database error: {e}")
         await callback.answer()
@@ -489,11 +477,9 @@ async def download_file(callback: types.CallbackQuery):
     if db_results:
         await callback.answer(text="📄 Downloading your past paper(s). Please wait...", show_alert=False)
         
-        # Loop through found results (Will send both Theory and Practical if they exist)
         for doc in db_results:
             p_type = doc.get("paper_type", "Standard")
             
-            # Format label based on the paper type
             type_label = ""
             if p_type == "Theory":
                 type_label = " 📚 [Theory]"
@@ -533,7 +519,7 @@ async def search_prompt(callback: types.CallbackQuery):
     await callback.answer()
 
 # ==========================================
-# Fuzzy Search by Subject Code or Name
+# Fuzzy Search
 # ==========================================
 
 @dp.message(F.text)
@@ -584,7 +570,7 @@ async def handle_search(message: types.Message):
     )
 
 # ==========================================
-# Channel: Auto Save File ID (Updated for T & P)
+# Channel: Auto Save File ID
 # ==========================================
 
 @dp.channel_post(F.document)
@@ -606,7 +592,6 @@ async def handle_channel_upload(post: types.Message):
         return
 
     try:
-        # Safely remove .pdf extension to process the naming convention
         clean_name = file_name[:-4] 
         parts = clean_name.split("_")
 
@@ -616,7 +601,6 @@ async def handle_channel_upload(post: types.Message):
         subject_code = parts[0].upper()
         year = parts[1]
 
-        # Ensure the subject code exists in our official dictionary
         if subject_code not in SUBJECTS:
             await bot.send_message(
                 chat_id=post.chat.id,
@@ -628,7 +612,6 @@ async def handle_channel_upload(post: types.Message):
         semester = SUBJECTS[subject_code][2]
         subject_name = SUBJECTS[subject_code][0]
 
-        # Determine if it is a Theory (T), Practical (P), or Standard paper
         paper_type = "Standard"
         if len(parts) > 2:
             last_part = parts[-1].upper()
@@ -637,8 +620,9 @@ async def handle_channel_upload(post: types.Message):
             elif last_part == 'P':
                 paper_type = "Practical"
 
+        custom_id = f"{subject_code}_{year}_{paper_type}"
         document_data = {
-            "custom_id": f"{subject_code}_{year}_{paper_type}", # Now safely unique
+            "custom_id": custom_id,
             "subject_code": subject_code,
             "year": year,
             "semester": semester,
@@ -646,19 +630,15 @@ async def handle_channel_upload(post: types.Message):
             "file_id": telegram_file_id
         }
 
-        files_col.update_one(
-            {"custom_id": document_data["custom_id"]},
-            {"$set": document_data},
-            upsert=True
-        )
+        # Saving directly to Firebase Firestore
+        files_col.document(custom_id).set(document_data)
 
-        # Send a highly detailed confirmation message to the admin channel
         type_str = f" [{paper_type}]" if paper_type != "Standard" else ""
         print(f"✅ Saved to DB: {subject_code} | Year {year} | Sem {semester} | Type: {paper_type}")
 
         await bot.send_message(
             chat_id=post.chat.id,
-            text=f"✅ *Saved successfully to Database!*\n\n"
+            text=f"✅ *Saved successfully to Firebase Database!*\n\n"
                  f"📚 *Subject:* {subject_name}\n"
                  f"🔑 *Code:* `{subject_code}`\n"
                  f"📅 *Year:* {year} | *Semester:* {semester}\n"
@@ -678,63 +658,66 @@ async def handle_channel_upload(post: types.Message):
         )
     except Exception as e:
         print(f"❌ Error during saving: {e}")
-        
-# ==========================================
-# Admin Stats Command
-# ==========================================
-
-@dp.message(Command("stats"))
-async def admin_stats(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ You are not authorized.")
-        return
-
-    try:
-        total = files_col.count_documents({})
-        level_stats = ""
-        for level in [1, 2, 3, 4]:
-            codes = [c for c, info in SUBJECTS.items() if info[1] == level]
-            count = files_col.count_documents({"subject_code": {"$in": codes}})
-            level_stats += f"• Level {level}: {count} file(s)\n"
-    except Exception as e:
-        await message.answer(f"❌ Database error: {e}")
-        return
-
-    await message.answer(
-        f"📊 *Bot Statistics*\n\n"
-        f"📁 Total files: *{total}*\n\n"
-        f"📚 By level:\n{level_stats}",
-        parse_mode="Markdown"
-    )
 
 # ==========================================
-# Run Bot
+# Run Bot (With Auto-Retry and Fixed Timeout)
 # ==========================================
 
 async def main():
-    print("Bot is running... 🚀")
+    import asyncio
+    from aiogram.client.session.aiohttp import AiohttpSession
+    from aiogram.exceptions import TelegramNetworkError
 
-    me = await bot.get_me()
-    print(f"Bot username: @{me.username}")
+    print("Bot is starting up. Connecting to Firebase... 🚀")
 
-    try:
-        chat = await bot.get_chat(CHANNEL_ID)
-        print(f"Channel found: {chat.title}")
-        member = await bot.get_chat_member(CHANNEL_ID, me.id)
-        print(f"Bot status in channel: {member.status}")
-    except Exception as e:
-        print(f"Channel access error: {e}")
-
-    await dp.start_polling(
-        bot,
-        allowed_updates=[
-            "message",
-            "channel_post",
-            "callback_query",
-            "edited_channel_post",
-            "edited_message"
-        ]
+    # මෙහිදී ClientTimeout වෙනුවට කෙලින්ම තත්පර ගණන (120.0) ලබා දී ඇත.
+    session = AiohttpSession(
+        timeout=120.0 
     )
+    
+    # Initialize bot with the custom session
+    custom_bot = Bot(token=BOT_TOKEN, session=session)
+
+    retry_count = 0
+    max_retries = 5
+
+    while retry_count < max_retries:
+        try:
+            me = await custom_bot.get_me()
+            print(f"✅ Bot successfully connected! Username: @{me.username}")
+
+            try:
+                chat = await custom_bot.get_chat(CHANNEL_ID)
+                print(f"✅ Channel found: {chat.title}")
+                member = await custom_bot.get_chat_member(CHANNEL_ID, me.id)
+                print(f"✅ Bot status in channel: {member.status}")
+            except Exception as e:
+                print(f"⚠️ Channel access error: {e}. Please check permissions and CHANNEL_ID.")
+
+            print("Bot is now actively polling for messages... 🔄")
+            await dp.start_polling(
+                custom_bot,
+                allowed_updates=[
+                    "message",
+                    "channel_post",
+                    "callback_query",
+                    "edited_channel_post",
+                    "edited_message"
+                ]
+            )
+            break  # If polling starts successfully, break the retry loop
+
+        except TelegramNetworkError as net_err:
+            retry_count += 1
+            print(f"🔴 Network Error (Attempt {retry_count}/{max_retries}): {net_err}")
+            print("⏳ Retrying in 10 seconds...")
+            await asyncio.sleep(10)
+        except Exception as e:
+            print(f"❌ Unexpected Error: {e}")
+            break
+            
+    if retry_count == max_retries:
+         print("❌ Failed to connect to Telegram after multiple attempts.")
 
 if __name__ == "__main__":
     asyncio.run(main())
