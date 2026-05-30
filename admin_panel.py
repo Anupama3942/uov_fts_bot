@@ -25,7 +25,6 @@ db = firestore.client()
 # ==========================================
 st.set_page_config(page_title="UOV FTS Bot - Admin", page_icon="⚙️", layout="centered")
 
-# Mobile දුරකථන වලට ගැලපෙන ලෙස බොත්තම් (Buttons) සකස් කිරීම සඳහා CSS ඇතුළත් කිරීම
 st.markdown("""
     <style>
         .stButton button {
@@ -44,7 +43,6 @@ st.markdown("""
 # 🔒 Login System (Password Gate)
 # ==========================================
 def check_password():
-    """මුරපදය නිවැරදි නම් True ද වැරදි නම් False ද ලබා දෙයි."""
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
 
@@ -52,7 +50,6 @@ def check_password():
         st.title("🔒 Admin Login")
         st.caption("Please enter the dashboard password to continue.")
         
-        # මුරපදය ඇතුළත් කිරීමේ කොටස
         password_input = st.text_input("Password", type="password", key="password")
         
         if password_input:
@@ -64,7 +61,6 @@ def check_password():
         return False
     return True
 
-# මුරපදය නිවැරදි වන තෙක් පහළ ඇති කිසිදු දත්තයක් පෙන්වන්නේ නැත
 if not check_password():
     st.stop()
 
@@ -80,8 +76,6 @@ st.caption("UOV FTS Bot Management Portal")
 st.subheader("📊 Bot Statistics")
 
 try:
-    # ❌ වැරදි ක්‍රමය: len(list(db.collection("...").stream())) (Downloads everything)
-    # ✅ නිවැරදි ක්‍රමය: count().get() (Counts on server, saves bandwidth and money)
     users_count_query = db.collection("bot_users").count().get()
     users_count = users_count_query[0][0].value
 
@@ -91,11 +85,9 @@ except Exception:
     users_count = 0
     files_count = 0
 
-# Pending files ඊළඟට Review කරන්න ඕන නිසා, එය පමණක් Download (Stream) කර ගනිමු
 pending_docs = list(db.collection("pending_resources").stream())
 pending_count = len(pending_docs)
 
-# තීරු 3 කට පෙන්වීම (Mobile වලදී ස්වයංක්‍රීයව සිරස්ව පෙළ ගැසේ)
 col1, col2, col3 = st.columns(3)
 col1.metric("Total Students", users_count)
 col2.metric("Approved Resources", files_count)
@@ -120,48 +112,50 @@ else:
         topic_title = data.get("topic_title", "No Title")
         uploader_name = data.get("uploader_name", "Anonymous")
         
-        st.markdown(f"### 📄 {topic_title}")
-        st.markdown(f"**Subject:** `{subject_code}` | **Category:** {category} | **Uploader:** {uploader_name}")
-        
-        btn_col1, btn_col2 = st.columns(2)
-        
-        # Approve කිරීමේ ක්‍රියාවලිය
-        if btn_col1.button("✅ Approve Note", key=f"app_{doc_id}"):
-            final_data = data.copy()
-            final_data["rating_sum"] = 0
-            final_data["rating_count"] = 0
-            if subject_code in SUBJECTS:
-                final_data["semester"] = SUBJECTS[subject_code][2]
+        with st.expander(f"📄 {topic_title} ({subject_code})"):
+            st.markdown(f"**Subject:** `{subject_code}` | **Category:** {category} | **Uploader:** {uploader_name}")
             
-            # ප්‍රධාන database එකට එක් කර pending එකෙන් ඉවත් කිරීම
-            db.collection("academic_resources").document(doc_id).set(final_data)
-            db.collection("pending_resources").document(doc_id).delete()
+            st.write("---")
             
-            # ශිෂ්‍යයාට Telegram පණිවිඩයක් මඟින් දැනුම් දීම
-            telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-            success_text = f"🎉 *Good News!*\nYour upload for `{subject_code}` ({category}) was approved and is now available to all students!"
+            # ✅ REJECT REASON SELECTBOX
+            reject_reason = st.selectbox(
+                "Select reason if rejecting:",
+                ["Low Quality / Blurry", "Wrong Subject / Category", "Duplicate Content", "Not a valid educational PDF", "Other"],
+                key=f"reason_{doc_id}"
+            )
             
-            try:
-                requests.post(telegram_url, data={"chat_id": data.get("uploader_id"), "text": success_text, "parse_mode": "Markdown"})
-            except Exception as e:
-                st.warning(f"Notification failed: {e}")
+            btn_col1, btn_col2 = st.columns(2)
             
-            st.success("Resource Approved successfully!")
-            st.rerun()
+            if btn_col1.button("✅ Approve Note", key=f"app_{doc_id}", type="primary"):
+                final_data = data.copy()
+                final_data["rating_sum"] = 0
+                final_data["rating_count"] = 0
+                if subject_code in SUBJECTS:
+                    final_data["semester"] = SUBJECTS[subject_code][2]
+                
+                db.collection("academic_resources").document(doc_id).set(final_data)
+                db.collection("pending_resources").document(doc_id).delete()
+                
+                telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                success_text = f"🎉 *Good News!*\nYour upload for `{subject_code}` ({category}) was approved and is now available to all students!"
+                try:
+                    requests.post(telegram_url, data={"chat_id": data.get("uploader_id"), "text": success_text, "parse_mode": "Markdown"})
+                except Exception:
+                    pass
+                
+                st.success("Resource Approved successfully!")
+                st.rerun()
 
-        # Reject කිරීමේ ක්‍රියාවලිය
-        if btn_col2.button("❌ Reject Note", key=f"rej_{doc_id}"):
-            db.collection("pending_resources").document(doc_id).delete()
-            
-            # ශිෂ්‍යයාට Telegram පණිවිඩයක් මඟින් දැනුම් දීම
-            telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-            rejection_text = f"❌ Your upload for `{subject_code}` was rejected during administrative review."
-            
-            try:
-                requests.post(telegram_url, data={"chat_id": data.get("uploader_id"), "text": rejection_text})
-            except Exception as e:
-                st.warning(f"Notification failed: {e}")
-            
-            st.error("Resource Rejected.")
-            st.rerun()
-        st.divider()
+            if btn_col2.button("❌ Reject Note", key=f"rej_{doc_id}"):
+                db.collection("pending_resources").document(doc_id).delete()
+                
+                telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                # ✅ REJECT MESSAGE WITH REASON
+                rejection_text = f"❌ Your upload for `{subject_code}` was rejected during administrative review.\n\n*Reason:* {reject_reason}\n\nPlease check your document and try again."
+                try:
+                    requests.post(telegram_url, data={"chat_id": data.get("uploader_id"), "text": rejection_text, "parse_mode": "Markdown"})
+                except Exception:
+                    pass
+                
+                st.error("Resource Rejected.")
+                st.rerun()

@@ -10,7 +10,7 @@ from google.cloud.firestore_v1.aggregation import AggregationQuery
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command, StateFilter
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton,InputMediaDocument
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
@@ -307,40 +307,40 @@ async def process_persistent_request(message: types.Message):
         parse_mode="Markdown"
     )
 
+
 # ==========================================
-# 📊 Optimized Async Bot Statistics
-# ==========================================
+# 📊 Optimized Async Bot Statistics (NO DB LOOP)
 @dp.message(F.text == "📊 Bot Statistics")
 async def process_persistent_stats(message: types.Message):
     await track_user(message.from_user)
     if not await is_admin(message.from_user.id):
-        await message.answer("❌ This feature is reserved for Administrators only.")
-        return
+        return await message.answer("❌ This feature is reserved for Administrators only.")
 
     try:
         count_query = await files_col.count().get()
         total = count_query[0][0].value
         
-        all_docs = []
-        async for doc in files_col.stream():
-            all_docs.append(doc.to_dict())
-            
         level_stats = ""
+        # ✅ FIX: Chunked Count Queries (Does NOT download the entire database)
         for level in [1, 2, 3, 4]:
             codes = [c for c, info in SUBJECTS.items() if info[1] == level]
-            count = sum(1 for d in all_docs if d.get("subject_code") in codes)
-            level_stats += f"• Level {level}: {count} file(s)\n"
+            lvl_total = 0
             
+            # Firestore 'in' query limit is 10, so we split codes into chunks
+            for i in range(0, len(codes), 10):
+                chunk = codes[i:i+10]
+                if chunk:
+                    chunk_query = await files_col.where(filter=FieldFilter("subject_code", "in", chunk)).count().get()
+                    lvl_total += chunk_query[0][0].value
+            
+            level_stats += f"• Level {level}: {lvl_total} file(s)\n"
+            
+        await message.answer(
+            f"📊 *Bot Statistics*\n\n📁 Total verified files: *{total}*\n\n📚 By level:\n{level_stats}",
+            parse_mode="Markdown"
+        )
     except Exception as e:
         await message.answer(f"❌ Database error: {e}")
-        return
-
-    await message.answer(
-        f"📊 *Bot Statistics*\n\n"
-        f"📁 Total verified files: *{total}*\n\n"
-        f"📚 By level:\n{level_stats}",
-        parse_mode="Markdown"
-    )
 
 @dp.message(Command("countdown"))
 async def cmd_countdown(message: types.Message):
@@ -831,87 +831,60 @@ async def handle_subcategory_view(callback: types.CallbackQuery):
             return
 
         await callback.message.answer(f"📥 Sending available {category}s for `{code}`...")
-        for doc in results:
-            data = doc.to_dict()
-            doc_id = doc.id
+        
+        # ✅ FIX: Chat Flood Fix via MediaGroup (For Lecture Notes)
+        if category == "Short Note":
+            # Keep individual messages for short notes to preserve inline rating buttons
+            for data in results:
+                rating = f"\n⭐ Rating: {round(data['rating_sum']/data['rating_count'], 1)}/5.0" if data.get("rating_count", 0) > 0 else ""
+                caption = f"📄 *{data.get('topic_title', data.get('file_name', 'Resource'))}*\n`{code}` | {category}\n👤 By: {data.get('uploader_name', 'Admin')}{rating}"
+                await bot.send_document(chat_id=callback.from_user.id, document=data["file_id"], caption=caption, parse_mode="Markdown", reply_markup=get_rating_keyboard(data["id"]))
+        else:
+            # Group into chunks of 10 to avoid spamming (MediaGroup)
+            media_group = []
+            for data in results:
+                caption = f"📄 *{data.get('topic_title', data.get('file_name', 'Resource'))}*\n`{code}` | {category}\n👤 By: {data.get('uploader_name', 'Admin')}"
+                media_group.append(InputMediaDocument(media=data["file_id"], caption=caption, parse_mode="Markdown"))
             
-            rating_str = ""
-            if data.get("rating_count", 0) > 0:
-                avg = round(data["rating_sum"] / data["rating_count"], 1)
-                rating_str = f"\n⭐ Rating: {avg}/5.0 ({data['rating_count']} votes)"
-
-            uploader_str = f"\n👤 Uploaded by: {data.get('uploader_name', 'Faculty Admin')}"
-            topic_title = data.get("topic_title", data.get("file_name", "Resource Document"))
-            
-            caption = f"📄 *{topic_title}*\n`{code}` | {category}{uploader_str}{rating_str}"
-            
-            kb = get_rating_keyboard(doc_id) if category == "Short Note" else None
-            
-            await bot.send_document(
-                chat_id=callback.from_user.id,
-                document=data["file_id"],
-                caption=caption,
-                parse_mode="Markdown",
-                reply_markup=kb
-            )
+            # Send in chunks of 10
+            for i in range(0, len(media_group), 10):
+                await bot.send_media_group(chat_id=callback.from_user.id, media=media_group[i:i+10])
+                
         await callback.answer()
 
 # ==========================================
-# Async Bulk Download
+# Async Bulk Download (✅ CHAT FLOOD FIXED)
 # ==========================================
 @dp.callback_query(F.data.startswith("dlall_"))
 async def download_all(callback: types.CallbackQuery):
     parts = callback.data.split("_")
     level, semester = parts[1], parts[2]
-    subjects = get_subjects_for(int(level), int(semester))
-    subject_codes = list(subjects.keys())
+    subject_codes = list(get_subjects_for(int(level), int(semester)).keys())
 
-    try:
-        query = files_col.where(filter=FieldFilter("subject_code", "in", subject_codes)).where(filter=FieldFilter("category", "==", "Past Paper"))
-        results = []
-        
-        async for doc in query.stream():
+    results = []
+    # Process chunks of 10 for Firestore 'in' query limitations
+    for i in range(0, len(subject_codes), 10):
+        chunk = subject_codes[i:i+10]
+        async for doc in files_col.where(filter=FieldFilter("subject_code", "in", chunk)).where(filter=FieldFilter("category", "==", "Past Paper")).stream():
             results.append(doc.to_dict())
-    except Exception as e:
-        await callback.message.answer(f"❌ Database error: {e}")
-        await callback.answer()
-        return
 
     if not results:
-        request_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Back", callback_data=f"level_{level}")]
-        ])
-        await callback.message.edit_text(
-            f"⚠️ No papers found for Level {level} Semester {semester} yet.\n\n"
-            f"Please browse by individual subject to request missing papers.",
-            parse_mode="Markdown",
-            reply_markup=request_kb
-        )
-        await callback.answer()
-        return
+        return await callback.message.edit_text(f"⚠️ No papers found for Level {level} Semester {semester}.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Back", callback_data=f"level_{level}")]]))
 
-    await callback.message.answer(
-        f"📥 *Sending all past papers for Level {level} — Semester {semester}*\n"
-        f"Found *{len(results)}* paper(s). Please wait...",
-        parse_mode="Markdown"
-    )
+    await callback.message.answer(f"📥 *Sending {len(results)} past paper(s)...*\nPlease wait.", parse_mode="Markdown")
 
+    # ✅ FIX: MediaGroup chunks of 10
+    media_group = []
     for r in results:
-        subject_name = SUBJECTS.get(r["subject_code"], ("Unknown",))[0]
         p_type = r.get("paper_type", "Standard")
-        type_label = ""
-        if p_type == "Theory":
-            type_label = " 📚 [Theory]"
-        elif p_type == "Practical":
-            type_label = " 💻 [Practical]"
+        type_label = " 📚 [Theory]" if p_type == "Theory" else " 💻 [Practical]" if p_type == "Practical" else ""
+        caption = f"📄 *{SUBJECTS.get(r['subject_code'], ('Unknown',))[0]}*{type_label}\n`{r['subject_code']}` | Year {r['year']} | Sem {r['semester']}"
+        media_group.append(InputMediaDocument(media=r["file_id"], caption=caption, parse_mode="Markdown"))
 
-        await bot.send_document(
-            chat_id=callback.from_user.id,
-            document=r["file_id"],
-            caption=f"📄 *{subject_name}*{type_label}\n"
-                    f"`{r['subject_code']}` | Year {r['year']} | Sem {r['semester']}",
-            parse_mode="Markdown"
-        )
+    # Send in chunks of 10
+    for i in range(0, len(media_group), 10):
+        await bot.send_media_group(chat_id=callback.from_user.id, media=media_group[i:i+10])
+        
     await callback.answer()
 
 # ==========================================
