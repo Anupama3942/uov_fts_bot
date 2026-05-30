@@ -5,15 +5,15 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
 
-# Main Bot එකෙහි ඇති විෂය ලැයිස්තුව (SUBJECTS) මෙහිදී භාවිත වේ
+# Use the subject list (SUBJECTS) from the main bot
 from bot import SUBJECTS 
 
-# Environment variables පූරණය කිරීම
+# Load environment variables
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "admin2026")
 
-# Firebase සම්බන්ධතාවය ආරක්ෂිතව ආරම්භ කිරීම
+# Initialize Firebase securely
 if not firebase_admin._apps:
     cred = credentials.Certificate("firebase.json")
     firebase_admin.initialize_app(cred)

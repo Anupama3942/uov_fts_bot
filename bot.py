@@ -3,7 +3,7 @@ import asyncio
 from datetime import datetime
 from thefuzz import process
 
-# Async Firestore Client සහ Filters
+# Async Firestore client and filters
 from google.cloud.firestore import AsyncClient
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.aggregation import AggregationQuery
@@ -15,14 +15,14 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
 
-# Environment Variables පූරණය කිරීම
+# Load environment variables
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")  
 FIREBASE_KEY_PATH = os.getenv("FIREBASE_KEY_PATH", "firebase.json")
 ADMIN_GROUP_ID = os.getenv("ADMIN_GROUP_ID")
 
-# Bot සහ Dispatcher ආරම්භ කිරීම
+# Initialize bot and dispatcher
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -111,7 +111,7 @@ SUBJECTS = {
 # 🛡️ Dynamic Admin Checker
 # ==========================================
 async def is_admin(user_id: int) -> bool:
-    """Firebase හි 'admins' collection එකෙන් Admin කෙනෙක්දැයි පරීක්ෂා කරයි"""
+    """Check whether the user is an admin based on the 'admins' collection."""
     doc = await db.collection("admins").document(str(user_id)).get()
     return doc.exists
 
@@ -933,7 +933,7 @@ async def download_file(callback: types.CallbackQuery):
 # ==========================================
 @dp.message(F.text)
 async def handle_search(message: types.Message, state: FSMContext):
-    # User FSM (Upload Wizard) එකේ ඉන්නවනම් සාමාන්‍ය Search එක අක්‍රීය කිරීම
+        # Disable normal search while the user is in the upload wizard FSM
     current_state = await state.get_state()
     if current_state is not None:
         return
