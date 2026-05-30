@@ -14,3 +14,7 @@ python-Levenshtein==0.27.3
 
 # Environment Variables (.env file)
 python-dotenv==1.2.2
+
+# Admin Dashboard
+streamlit==1.36.0
+requests==2.32.3

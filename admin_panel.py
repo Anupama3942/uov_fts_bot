@@ -6,7 +6,7 @@ from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
 
 # Use the subject list (SUBJECTS) from the main bot
-from bot import SUBJECTS 
+from subjects import SUBJECTS 
 
 # Load environment variables
 load_dotenv()
