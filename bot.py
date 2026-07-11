@@ -6,9 +6,11 @@ from thefuzz import process
 # Async Firestore client and filters
 from google.cloud.firestore import AsyncClient
 from google.cloud.firestore_v1.base_query import FieldFilter
-from google.cloud.firestore_v1.aggregation import AggregationQuery
+# from google.cloud.firestore_v1.aggregation import AggregationQuery
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton,InputMediaDocument
 from aiogram.fsm.state import StatesGroup, State
@@ -23,7 +25,8 @@ FIREBASE_KEY_PATH = os.getenv("FIREBASE_KEY_PATH", "firebase.json")
 ADMIN_GROUP_ID = os.getenv("ADMIN_GROUP_ID")
 
 # Initialize bot and dispatcher
-bot = Bot(token=BOT_TOKEN)
+session = AiohttpSession(timeout=120.0)
+bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher()
 
 # ==========================================
@@ -409,7 +412,8 @@ async def process_upload_subject(message: types.Message, state: FSMContext):
 
 @dp.callback_query(UploadForm.waiting_for_category, F.data.startswith("upcat_"))
 async def process_upload_category(callback: types.CallbackQuery, state: FSMContext):
-    category = callback.data.split("_")[1]
+    parts = callback.data.split("_")
+    category = "_".join(parts[1:])
     await state.update_data(category=category)
     await state.set_state(UploadForm.waiting_for_file)
     
@@ -713,15 +717,25 @@ async def process_subject(callback: types.CallbackQuery):
     )
     await callback.answer()
 
+# ==========================================
+# ✅ FIXED: handle_subcategory_view Function
+# ==========================================
 @dp.callback_query(F.data.startswith("subcat_"))
 async def handle_subcategory_view(callback: types.CallbackQuery):
     parts = callback.data.split("_")
-    category = parts[1]
-    code = parts[2]
-    level = parts[3]
-    semester = parts[4]
+    
+    # 1. FIXED VARIABLE NAMES & CATEGORY EXTRACTION
+    level = parts[-2]
+    semester = parts[-1]
+    code = parts[-3]  # Changed 'subject_code' to 'code' to match your logic below
+    
+    # Reconstruct category safely (Fixes "Short_Note" split bug)
+    category = "_".join(parts[1:-3]) 
+    
+    # Get subject name, default to "Unknown" if not found
     subject_name = SUBJECTS.get(code, ("Unknown",))[0]
 
+    # --- PAST PAPERS LOGIC ---
     if category == "Past Paper":
         keyboard = await get_year_keyboard(code, level, semester) 
         if not keyboard:
@@ -742,8 +756,11 @@ async def handle_subcategory_view(callback: types.CallbackQuery):
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
+        
+    # --- OTHER RESOURCES LOGIC ---
     else:
         try:
+            # Query Firestore for resources
             query = files_col.where(filter=FieldFilter("subject_code", "==", code)).where(filter=FieldFilter("category", "==", category))
             results = []
             
@@ -753,6 +770,7 @@ async def handle_subcategory_view(callback: types.CallbackQuery):
             await callback.message.answer(f"❌ Database error: {e}")
             return
 
+        # If no resources found
         if not results:
             back_kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="⬅️ Back", callback_data=f"subject_{code}_{level}_{semester}")]
@@ -773,7 +791,15 @@ async def handle_subcategory_view(callback: types.CallbackQuery):
             for data in results:
                 rating = f"\n⭐ Rating: {round(data['rating_sum']/data['rating_count'], 1)}/5.0" if data.get("rating_count", 0) > 0 else ""
                 caption = f"📄 *{data.get('topic_title', data.get('file_name', 'Resource'))}*\n`{code}` | {category}\n👤 By: {data.get('uploader_name', 'Admin')}{rating}"
-                await bot.send_document(chat_id=callback.from_user.id, document=data["file_id"], caption=caption, parse_mode="Markdown", reply_markup=get_rating_keyboard(data["id"]))
+                
+                # Make sure you are using 'bot.send_document' globally
+                await bot.send_document(
+                    chat_id=callback.from_user.id, 
+                    document=data["file_id"], 
+                    caption=caption, 
+                    parse_mode="Markdown", 
+                    reply_markup=get_rating_keyboard(data["id"])
+                )
         else:
             # Group into chunks of 10 to avoid spamming (MediaGroup)
             media_group = []
@@ -783,7 +809,18 @@ async def handle_subcategory_view(callback: types.CallbackQuery):
             
             # Send in chunks of 10
             for i in range(0, len(media_group), 10):
-                await bot.send_media_group(chat_id=callback.from_user.id, media=media_group[i:i+10])
+                chunk = media_group[i:i+10]
+                
+                # 2. FIXED: Telegram crashes if a MediaGroup has only 1 item.
+                if len(chunk) == 1:
+                    await bot.send_document(
+                        chat_id=callback.from_user.id,
+                        document=chunk[0].media,
+                        caption=chunk[0].caption,
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await bot.send_media_group(chat_id=callback.from_user.id, media=chunk)
                 
         await callback.answer()
 
@@ -1009,38 +1046,19 @@ async def handle_channel_upload(post: types.Message):
 # Run Bot 
 # ==========================================
 async def main():
-    from aiogram.client.session.aiohttp import AiohttpSession
-    from aiogram.exceptions import TelegramNetworkError
-
     print("Bot is starting up. Connecting to Async Firebase... 🚀")
-
-    session = AiohttpSession(timeout=120.0)
-    custom_bot = Bot(token=BOT_TOKEN, session=session)
-
     retry_count = 0
     max_retries = 5
 
     while retry_count < max_retries:
         try:
-            me = await custom_bot.get_me()
+            me = await bot.get_me() # custom_bot වෙනුවට bot දැම්මා
             print(f"✅ Bot successfully connected! Username: @{me.username}")
-
-            try:
-                chat = await custom_bot.get_chat(CHANNEL_ID)
-                print(f"✅ Channel found: {chat.title}")
-            except Exception:
-                pass
 
             print("Bot is now actively polling for messages... 🔄")
             await dp.start_polling(
-                custom_bot,
-                allowed_updates=[
-                    "message",
-                    "channel_post",
-                    "callback_query",
-                    "edited_channel_post",
-                    "edited_message"
-                ]
+                bot, # custom_bot වෙනුවට bot දැම්මා
+                allowed_updates=["message", "channel_post", "callback_query", "edited_channel_post", "edited_message"]
             )
             break
 

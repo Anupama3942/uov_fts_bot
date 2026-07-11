@@ -5,8 +5,9 @@
 # Telegram Bot Framework
 aiogram==3.28.2
 
-# Firebase / Firestore Database
-firebase-admin==7.4.0
+# Firebase / Firestore Database (Fixed Version to current stable)
+firebase-admin==6.5.0
+google-cloud-firestore==2.14.0
 
 # Fuzzy Subject Code Search
 thefuzz==0.22.1

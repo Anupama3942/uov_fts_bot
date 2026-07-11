@@ -71,7 +71,7 @@ st.title("🛠️ Admin Dashboard")
 st.caption("UOV FTS Bot Management Portal")
 
 # ==========================================
-# 📊 Statistics Section (OPTIMIZED 🚀)
+# 📊 Statistics Section
 # ==========================================
 st.subheader("📊 Bot Statistics")
 
@@ -114,8 +114,15 @@ else:
         
         with st.expander(f"📄 {topic_title} ({subject_code})"):
             st.markdown(f"**Subject:** `{subject_code}` | **Category:** {category} | **Uploader:** {uploader_name}")
-            
             st.write("---")
+            
+            # ✅ FIX: Past Paper එකක් නම් Year එක සහ Paper Type එක ඇතුළත් කිරීමට ඉඩ දීම
+            paper_year = ""
+            paper_type = "Standard"
+            if category == "Past Paper":
+                y_col, t_col = st.columns(2)
+                paper_year = y_col.text_input("Enter Paper Year (e.g., 2023):", key=f"year_{doc_id}")
+                paper_type = t_col.selectbox("Paper Type:", ["Standard", "Theory", "Practical"], key=f"ptype_{doc_id}")
             
             # ✅ REJECT REASON SELECTBOX
             reject_reason = st.selectbox(
@@ -127,30 +134,38 @@ else:
             btn_col1, btn_col2 = st.columns(2)
             
             if btn_col1.button("✅ Approve Note", key=f"app_{doc_id}", type="primary"):
-                final_data = data.copy()
-                final_data["rating_sum"] = 0
-                final_data["rating_count"] = 0
-                if subject_code in SUBJECTS:
-                    final_data["semester"] = SUBJECTS[subject_code][2]
-                
-                db.collection("academic_resources").document(doc_id).set(final_data)
-                db.collection("pending_resources").document(doc_id).delete()
-                
-                telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-                success_text = f"🎉 *Good News!*\nYour upload for `{subject_code}` ({category}) was approved and is now available to all students!"
-                try:
-                    requests.post(telegram_url, data={"chat_id": data.get("uploader_id"), "text": success_text, "parse_mode": "Markdown"})
-                except Exception:
-                    pass
-                
-                st.success("Resource Approved successfully!")
-                st.rerun()
+                # Past Paper එකක් නම් වර්ෂය අනිවාර්ය කිරීම
+                if category == "Past Paper" and not paper_year.strip():
+                    st.error("⚠️ Please enter a valid year before approving a Past Paper!")
+                else:
+                    final_data = data.copy()
+                    final_data["rating_sum"] = 0
+                    final_data["rating_count"] = 0
+                    
+                    if category == "Past Paper":
+                        final_data["year"] = paper_year.strip()
+                        final_data["paper_type"] = paper_type
+
+                    if subject_code in SUBJECTS:
+                        final_data["semester"] = SUBJECTS[subject_code][2]
+                    
+                    db.collection("academic_resources").document(doc_id).set(final_data)
+                    db.collection("pending_resources").document(doc_id).delete()
+                    
+                    telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                    success_text = f"🎉 *Good News!*\nYour upload for `{subject_code}` ({category}) was approved and is now available to all students!"
+                    try:
+                        requests.post(telegram_url, data={"chat_id": data.get("uploader_id"), "text": success_text, "parse_mode": "Markdown"})
+                    except Exception:
+                        pass
+                    
+                    st.success("Resource Approved successfully!")
+                    st.rerun()
 
             if btn_col2.button("❌ Reject Note", key=f"rej_{doc_id}"):
                 db.collection("pending_resources").document(doc_id).delete()
                 
                 telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-                # ✅ REJECT MESSAGE WITH REASON
                 rejection_text = f"❌ Your upload for `{subject_code}` was rejected during administrative review.\n\n*Reason:* {reject_reason}\n\nPlease check your document and try again."
                 try:
                     requests.post(telegram_url, data={"chat_id": data.get("uploader_id"), "text": rejection_text, "parse_mode": "Markdown"})
