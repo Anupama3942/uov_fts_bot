@@ -11,7 +11,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.exceptions import TelegramNetworkError
-from aiogram.filters import CommandStart, Command, StateFilter
+from aiogram.filters import CommandStart, Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton,InputMediaDocument
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
@@ -33,7 +33,19 @@ dp = Dispatcher()
 # 🚀 Async Firestore Initialization
 # ==========================================
 import json
-db = AsyncClient.from_service_account_json(FIREBASE_KEY_PATH) if os.path.exists(FIREBASE_KEY_PATH) else AsyncClient.from_service_account_info(json.loads(os.getenv("FIREBASE_CREDENTIALS", "{}")))
+
+if os.path.exists(FIREBASE_KEY_PATH):
+    db = AsyncClient.from_service_account_json(FIREBASE_KEY_PATH)
+else:
+    _creds_json = os.getenv("FIREBASE_CREDENTIALS")
+    if not _creds_json:
+        raise RuntimeError(
+            "❌ Firebase credentials not found!\n"
+            "   firebase.json file එකක් නෑ.\n"
+            "   FIREBASE_CREDENTIALS environment variable ද set නෑ.\n"
+            "   .env file එකේ FIREBASE_CREDENTIALS='{...}' add කරන්න."
+        )
+    db = AsyncClient.from_service_account_info(json.loads(_creds_json))
 
 # Database Collections
 files_col = db.collection("academic_resources")
@@ -853,10 +865,19 @@ async def download_all(callback: types.CallbackQuery):
         caption = f"📄 *{SUBJECTS.get(r['subject_code'], ('Unknown',))[0]}*{type_label}\n`{r['subject_code']}` | Year {r['year']} | Sem {r['semester']}"
         media_group.append(InputMediaDocument(media=r["file_id"], caption=caption, parse_mode="Markdown"))
 
-    # Send in chunks of 10
+    # ✅ FIX: Single item නම් send_media_group crash වෙනවා — send_document use කරනවා
     for i in range(0, len(media_group), 10):
-        await bot.send_media_group(chat_id=callback.from_user.id, media=media_group[i:i+10])
-        
+        chunk = media_group[i:i+10]
+        if len(chunk) == 1:
+            await bot.send_document(
+                chat_id=callback.from_user.id,
+                document=chunk[0].media,
+                caption=chunk[0].caption,
+                parse_mode="Markdown"
+            )
+        else:
+            await bot.send_media_group(chat_id=callback.from_user.id, media=chunk)
+
     await callback.answer()
 
 # ==========================================
@@ -905,8 +926,11 @@ async def download_file(callback: types.CallbackQuery):
 # ==========================================
 @dp.message(F.text)
 async def handle_search(message: types.Message, state: FSMContext):
-    # Disable normal search while the user is in the upload wizard FSM
-    # get the user's query text
+    # ✅ FIX: Upload wizard FSM ඇතුළේ ඉන්නකොට fuzzy search run වෙන්නේ නෑ
+    current_state = await state.get_state()
+    if current_state is not None:
+        return
+
     query = (message.text or "").strip()
 
     if not query:
