@@ -30,7 +30,7 @@ bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher()
 
 # ==========================================
-# 🚀 Async Firestore Initialization
+# Async Firestore Initialization
 # ==========================================
 import json
 
@@ -58,7 +58,7 @@ users_col = db.collection("bot_users")
 from subjects import SUBJECTS
 
 # ==========================================
-# 🛡️ Dynamic Admin Checker
+# Dynamic Admin Checker
 # ==========================================
 async def is_admin(user_id: int) -> bool:
     """Check whether the user is an admin based on the 'admins' collection."""
@@ -73,7 +73,7 @@ def get_subjects_for(level: int, semester: int):
     }
 
 # ==========================================
-# 👤 Async User Tracking
+# Async User Tracking
 # ==========================================
 async def track_user(user: types.User):
     doc_ref = users_col.document(str(user.id))
@@ -259,7 +259,7 @@ async def process_persistent_request(message: types.Message):
 
 
 # ==========================================
-# 📊 Optimized Async Bot Statistics (NO DB LOOP)
+# Optimized Async Bot Statistics (NO DB LOOP)
 @dp.message(F.text == "📊 Bot Statistics")
 async def process_persistent_stats(message: types.Message):
     await track_user(message.from_user)
@@ -362,7 +362,7 @@ async def show_leaderboard(message: types.Message):
 
 
 # ==========================================
-# 📤 NEW FSM Interactive Upload Wizard (Easy Upload)
+# NEW FSM Interactive Upload Wizard (Easy Upload)
 # ==========================================
 class UploadForm(StatesGroup):
     waiting_for_subject = State()
@@ -507,9 +507,8 @@ async def handle_wizard_document(message: types.Message, state: FSMContext):
     except Exception as e:
         print(f"Failed to alert admin group. Ensure ADMIN_GROUP_ID is correct and bot is an admin in the group. Error: {e}")
 
-
 # ==========================================
-# 🛡️ Admin Verification (Async Update via Group)
+# Admin Verification (Async Update via Group)
 # ==========================================
 @dp.callback_query(F.data.startswith("admin_approve_"))
 async def admin_approve_handler(callback: types.CallbackQuery):
@@ -598,7 +597,6 @@ async def process_rating(callback: types.CallbackQuery):
     
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.answer(f"✅ You rated this note {stars} Stars! Thank you!", show_alert=True)
-
 
 # ==========================================
 # Paper Request Feature
@@ -730,7 +728,7 @@ async def process_subject(callback: types.CallbackQuery):
     await callback.answer()
 
 # ==========================================
-# ✅ FIXED: handle_subcategory_view Function
+# handle_subcategory_view Function
 # ==========================================
 @dp.callback_query(F.data.startswith("subcat_"))
 async def handle_subcategory_view(callback: types.CallbackQuery):
@@ -797,7 +795,7 @@ async def handle_subcategory_view(callback: types.CallbackQuery):
 
         await callback.message.answer(f"📥 Sending available {category}s for `{code}`...")
         
-        # ✅ FIX: Chat Flood Fix via MediaGroup (For Lecture Notes)
+        # Chat Flood Fix via MediaGroup (For Lecture Notes)
         if category == "Short Note":
             # Keep individual messages for short notes to preserve inline rating buttons
             for data in results:
@@ -837,7 +835,7 @@ async def handle_subcategory_view(callback: types.CallbackQuery):
         await callback.answer()
 
 # ==========================================
-# Async Bulk Download (✅ CHAT FLOOD FIXED)
+# Async Bulk Download
 # ==========================================
 @dp.callback_query(F.data.startswith("dlall_"))
 async def download_all(callback: types.CallbackQuery):
@@ -857,7 +855,7 @@ async def download_all(callback: types.CallbackQuery):
 
     await callback.message.answer(f"📥 *Sending {len(results)} past paper(s)...*\nPlease wait.", parse_mode="Markdown")
 
-    # ✅ FIX: MediaGroup chunks of 10
+    # MediaGroup chunks of 10
     media_group = []
     for r in results:
         p_type = r.get("paper_type", "Standard")
@@ -865,7 +863,6 @@ async def download_all(callback: types.CallbackQuery):
         caption = f"📄 *{SUBJECTS.get(r['subject_code'], ('Unknown',))[0]}*{type_label}\n`{r['subject_code']}` | Year {r['year']} | Sem {r['semester']}"
         media_group.append(InputMediaDocument(media=r["file_id"], caption=caption, parse_mode="Markdown"))
 
-    # ✅ FIX: Single item නම් send_media_group crash වෙනවා — send_document use කරනවා
     for i in range(0, len(media_group), 10):
         chunk = media_group[i:i+10]
         if len(chunk) == 1:
@@ -926,7 +923,7 @@ async def download_file(callback: types.CallbackQuery):
 # ==========================================
 @dp.message(F.text)
 async def handle_search(message: types.Message, state: FSMContext):
-    # ✅ FIX: Upload wizard FSM ඇතුළේ ඉන්නකොට fuzzy search run වෙන්නේ නෑ
+
     current_state = await state.get_state()
     if current_state is not None:
         return
@@ -939,7 +936,7 @@ async def handle_search(message: types.Message, state: FSMContext):
     if query.startswith("/"):
         return
 
-    # ✅ PERMANENT FIX: Forgiving ignore list
+    # PERMANENT FIX: Forgiving ignore list
     # Checks if the text contains any of our menu keywords or emojis
     ignore_keywords = ["browse", "search", "statistics", "request", "upload", "leaderboard", "📂", "🔍", "📊", "🙋‍♂️", "📤", "🏆"]
     
@@ -1076,12 +1073,12 @@ async def main():
 
     while retry_count < max_retries:
         try:
-            me = await bot.get_me() # custom_bot වෙනුවට bot දැම්මා
+            me = await bot.get_me() 
             print(f"✅ Bot successfully connected! Username: @{me.username}")
 
             print("Bot is now actively polling for messages... 🔄")
             await dp.start_polling(
-                bot, # custom_bot වෙනුවට bot දැම්මා
+                bot, 
                 allowed_updates=["message", "channel_post", "callback_query", "edited_channel_post", "edited_message"]
             )
             break

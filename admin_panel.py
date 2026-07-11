@@ -40,7 +40,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔒 Login System (Password Gate)
+# Login System (Password Gate)
 # ==========================================
 def check_password():
     if "password_correct" not in st.session_state:
@@ -65,13 +65,13 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 🛠️ Main Dashboard View
+# Main Dashboard View
 # ==========================================
 st.title("🛠️ Admin Dashboard")
 st.caption("UOV FTS Bot Management Portal")
 
 # ==========================================
-# 📊 Statistics Section
+# Statistics Section
 # ==========================================
 st.subheader("📊 Bot Statistics")
 
@@ -96,7 +96,7 @@ col3.metric("Pending Approvals", pending_count)
 st.divider()
 
 # ==========================================
-# ⏳ Pending Approvals Section
+# Pending Approvals Section
 # ==========================================
 st.subheader("⏳ Pending Review")
 
@@ -116,7 +116,6 @@ else:
             st.markdown(f"**Subject:** `{subject_code}` | **Category:** {category} | **Uploader:** {uploader_name}")
             st.write("---")
             
-            # ✅ FIX: Past Paper එකක් නම් Year එක සහ Paper Type එක ඇතුළත් කිරීමට ඉඩ දීම
             paper_year = ""
             paper_type = "Standard"
             if category == "Past Paper":
@@ -124,7 +123,7 @@ else:
                 paper_year = y_col.text_input("Enter Paper Year (e.g., 2023):", key=f"year_{doc_id}")
                 paper_type = t_col.selectbox("Paper Type:", ["Standard", "Theory", "Practical"], key=f"ptype_{doc_id}")
             
-            # ✅ REJECT REASON SELECTBOX
+            # REJECT REASON SELECTBOX
             reject_reason = st.selectbox(
                 "Select reason if rejecting:",
                 ["Low Quality / Blurry", "Wrong Subject / Category", "Duplicate Content", "Not a valid educational PDF", "Other"],
@@ -134,7 +133,7 @@ else:
             btn_col1, btn_col2 = st.columns(2)
             
             if btn_col1.button("✅ Approve Note", key=f"app_{doc_id}", type="primary"):
-                # Past Paper එකක් නම් වර්ෂය අනිවාර්ය කිරීම
+                # year must be provided if category is Past Paper
                 if category == "Past Paper" and not paper_year.strip():
                     st.error("⚠️ Please enter a valid year before approving a Past Paper!")
                 else:
