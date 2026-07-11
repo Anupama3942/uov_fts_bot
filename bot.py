@@ -260,6 +260,7 @@ async def process_persistent_request(message: types.Message):
 
 # ==========================================
 # Optimized Async Bot Statistics (NO DB LOOP)
+# ==========================================
 @dp.message(F.text == "📊 Bot Statistics")
 async def process_persistent_stats(message: types.Message):
     await track_user(message.from_user)
@@ -271,7 +272,7 @@ async def process_persistent_stats(message: types.Message):
         total = count_query[0][0].value
         
         level_stats = ""
-        # ✅ FIX: Chunked Count Queries (Does NOT download the entire database)
+        # Chunked Count Queries (Does NOT download the entire database)
         for level in [1, 2, 3, 4]:
             codes = [c for c, info in SUBJECTS.items() if info[1] == level]
             lvl_total = 0
@@ -399,8 +400,18 @@ async def cancel_wizard(message: types.Message, state: FSMContext):
 @dp.message(UploadForm.waiting_for_subject)
 async def process_upload_subject(message: types.Message, state: FSMContext):
     if message.text == "/cancel":
-        return 
-        
+        return
+
+# cant send photos, stickers, or files as subject code
+    if not message.text:
+        await message.answer(
+            "❌ Please type the **Subject Code** as text (e.g. `TICT2113`).\n"
+            "Photos, stickers, and files are not accepted here.\n"
+            "Or type /cancel to stop.",
+            parse_mode="Markdown"
+        )
+        return
+
     subject_code = message.text.strip().upper()
     
     if subject_code not in SUBJECTS:
@@ -435,6 +446,14 @@ async def process_upload_category(callback: types.CallbackQuery, state: FSMConte
         parse_mode="Markdown"
     )
     await callback.answer()
+
+@dp.message(UploadForm.waiting_for_file, F.text)
+async def handle_wrong_input_in_file_state(message: types.Message):
+    await message.answer(
+        "📎 Please **send a PDF file**, not text.\n"
+        "Or type /cancel to abort the upload.",
+        parse_mode="Markdown"
+    )
 
 @dp.message(UploadForm.waiting_for_file, F.document)
 async def handle_wizard_document(message: types.Message, state: FSMContext):
@@ -526,14 +545,24 @@ async def admin_approve_handler(callback: types.CallbackQuery):
         return
 
     data = doc.to_dict()
+
+    # Past papers must NOT be approved in the bot group due to missing year/type fields; admins must use the web dashboard for that.
+    if data.get("category") == "Past Paper":
+        await callback.answer(
+            "⚠️ Past Papers must be approved via the Admin Panel web dashboard.\n"
+            "Reason: Year and Paper Type fields are required and must be filled manually.",
+            show_alert=True
+        )
+        return
+
     data["rating_sum"] = 0
     data["rating_count"] = 0
     data["semester"] = SUBJECTS[data["subject_code"]][2]
-    
+
     await files_col.document(doc_id).set(data)
     await doc_ref.delete()
 
-    admin_name = callback.from_user.first_name 
+    admin_name = callback.from_user.first_name
     await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n✅ *APPROVED BY {admin_name}*")
     await callback.answer("Approved and added to database!")
     
@@ -573,7 +602,7 @@ async def admin_reject_handler(callback: types.CallbackQuery):
         pass
 
 # ==========================================
-# ⭐ Student Rating Handler
+# Student Rating Handler
 # ==========================================
 @dp.callback_query(F.data.startswith("rate_"))
 async def process_rating(callback: types.CallbackQuery):
@@ -590,11 +619,22 @@ async def process_rating(callback: types.CallbackQuery):
         return
 
     data = doc.to_dict()
+
+    # Check if the user has already rated this note
+    rated_by = data.get("rated_by", [])
+    if callback.from_user.id in rated_by:
+        await callback.answer("⚠️ You have already rated this note!", show_alert=True)
+        return
+
     new_sum = data.get("rating_sum", 0) + stars
     new_count = data.get("rating_count", 0) + 1
-    
-    await doc_ref.update({"rating_sum": new_sum, "rating_count": new_count}) 
-    
+
+    await doc_ref.update({
+        "rating_sum": new_sum,
+        "rating_count": new_count,
+        "rated_by": rated_by + [callback.from_user.id]
+    })
+
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.answer(f"✅ You rated this note {stars} Stars! Thank you!", show_alert=True)
 
