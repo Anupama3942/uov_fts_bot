@@ -10,7 +10,7 @@ COPY . .
 # Make the start script executable
 RUN chmod +x start.sh
 
-# Expose the Streamlit port for Coolify
+# Expose the Streamlit port
 EXPOSE 8501
 
 # Run the start script to launch both apps
