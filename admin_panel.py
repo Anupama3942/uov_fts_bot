@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 import streamlit as st
 import firebase_admin
@@ -15,8 +16,15 @@ DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "admin2026")
 
 # Initialize Firebase securely
 if not firebase_admin._apps:
-    cred = credentials.Certificate("firebase.json")
-    firebase_admin.initialize_app(cred)
+    firebase_env = os.getenv("FIREBASE_CREDENTIALS")
+    if firebase_env:
+        # JSON string එක Dictionary එකක් බවට පත් කිරීම
+        firebase_dict = json.loads(firebase_env)
+        cred = credentials.Certificate(firebase_dict)
+        firebase_admin.initialize_app(cred)
+    else:
+        st.error("❌ FIREBASE_CREDENTIALS environment variable is missing in Coolify!")
+        st.stop()
 
 db = firestore.client()
 
