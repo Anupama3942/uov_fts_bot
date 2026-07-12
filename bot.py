@@ -76,6 +76,11 @@ def get_subjects_for(level: int, semester: int):
 # Async User Tracking
 # ==========================================
 async def track_user(user: types.User):
+    # Ban check
+    ban_doc = await db.collection("banned_users").document(str(user.id)).get()
+    if ban_doc.exists:
+        raise Exception("BANNED") 
+
     doc_ref = users_col.document(str(user.id))
     doc = await doc_ref.get() 
     if not doc.exists:
